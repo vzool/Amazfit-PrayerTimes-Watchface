@@ -2,7 +2,7 @@
   "configVersion": "v2",
   "app": {
     "appId": 1135988,
-    "appName": "واجهة أوقات الصلاة-Prayer Face",
+    "appName": "أوقات الصلاة-Prayer Times",
     "appType": "watchface",
     "version": { "code": 1, "name": "1.0.0" },
     "icon": "icon.png",
@@ -35,8 +35,8 @@
     }
   },
   "i18n": {
-    "ar-SD": { "appName": "واجهة أوقات الصلاة" },
-    "en-US": { "appName": "Prayer Face" }
+    "ar-SD": { "appName": "أوقات الصلاة" },
+    "en-US": { "appName": "Prayer Times" }
   },
   "defaultLanguage": "ar-SD"
 }
