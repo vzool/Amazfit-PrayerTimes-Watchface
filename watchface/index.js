@@ -5,7 +5,7 @@ import { LocalStorage } from '@zos/storage'
 import { Time, HeartRate, Battery, Step, Calorie, Distance, Stand, Pai, Weather } from '@zos/sensor'
 import { getPrayerTimes } from './prayer'
 import { toHijri, HIJRI_MONTHS } from './hijri'
-import { CITIES } from './cities'
+import { REGIONS } from './regions'
 
 // ===== إعدادات ثابتة =====
 const CFG = {
@@ -22,8 +22,18 @@ const HIJRI_EN = ['Muharram', 'Safar', 'Rabi I', 'Rabi II', 'Jumada I', 'Jumada 
 
 // ===== الحالة المحفوظة =====
 const store = new LocalStorage()
-let st = { lang: 'ar', city: 0, page: 0 }
-try { const s = JSON.parse(store.getItem('cfg')); if (s && CITIES[s.city]) st = s } catch (e) {}
+let st = { lang: 'ar', reg: 0, city: 0, page: 0, lat: 24.7136, lon: 46.6753 }
+try {
+  const s = JSON.parse(store.getItem('cfg'))
+  if (s) {
+    if (s.lang) st.lang = s.lang
+    if (s.reg !== undefined && s.reg >= 0 && s.reg <= REGIONS.length) st.reg = s.reg
+    if (s.city !== undefined) st.city = s.city
+    if (s.page !== undefined) st.page = s.page
+    if (s.lat !== undefined) st.lat = s.lat
+    if (s.lon !== undefined) st.lon = s.lon
+  }
+} catch (e) {}
 const save = () => { try { store.setItem('cfg', JSON.stringify(st)) } catch (e) {} }
 
 const { width: W, height: H } = getDeviceInfo()
@@ -54,7 +64,7 @@ function R(p, x, y, w, h, color, radius) {
 }
 function B(p, x, y, w, h, color, size, text, fn) {
   const wd = hmUI.createWidget(hmUI.widget.BUTTON, {
-    x: sx(x), y: sy(y), w: sx(w), h: sy(h), radius: sx(18), normal_color: color, press_color: 0x444444,
+    x: sx(x), y: sy(y), w: sx(w), h: sy(h), radius: sx(14), normal_color: color, press_color: 0x444444,
     text, text_size: Math.round((size * W) / 390), color: 0xffffff, click_func: fn,
   })
   pages[p].push(wd)
@@ -66,20 +76,56 @@ let currentPage = st.page !== undefined ? st.page : 0
 let ui = {}, rowRects = [], rowTimes = [], rowNames = []
 const safe = (fn, d) => { try { const v = fn(); return v === undefined || v === null ? d : v } catch (e) { return d } }
 
+function isCustomRegion() {
+  return st.reg === REGIONS.length
+}
+
+function getCurrentLocation() {
+  if (isCustomRegion()) {
+    return { lat: st.lat, lon: st.lon, name: { ar: 'موقع مخصص', en: 'Custom' } }
+  }
+  const region = REGIONS[st.reg] || REGIONS[0]
+  const c = region.cities[st.city] || region.cities[0]
+  return { lat: c.lat, lon: c.lon, name: c }
+}
+
 function showPage(p) {
   pages.forEach((arr, i) => arr.forEach(w => w.setProperty(hmUI.prop.VISIBLE, i === p)))
   if (ui.tap) ui.tap.setProperty(hmUI.prop.VISIBLE, p !== 2)
+
+  if (p === 2) {
+    const custom = isCustomRegion()
+    // إظهار أزرار اختيار المدينة فقط إذا لم يكن "موقع مخصص"
+    ui.cityPrev.setProperty(hmUI.prop.VISIBLE, !custom)
+    ui.cityText.setProperty(hmUI.prop.VISIBLE, !custom)
+    ui.cityNext.setProperty(hmUI.prop.VISIBLE, !custom)
+
+    // إظهار أزرار تعديل الإحداثيات فقط في حالة "موقع مخصص"
+    ui.latMinus.setProperty(hmUI.prop.VISIBLE, custom)
+    ui.latPlus.setProperty(hmUI.prop.VISIBLE, custom)
+    ui.lonMinus.setProperty(hmUI.prop.VISIBLE, custom)
+    ui.lonPlus.setProperty(hmUI.prop.VISIBLE, custom)
+  }
 }
 
 function applyLang() {
   const k = isAr() ? 0 : 1
   labels.forEach(l => l.wd.setProperty(hmUI.prop.TEXT, l.text[k]))
   for (let i = 0; i < 6; i++) rowNames[i].setProperty(hmUI.prop.TEXT, NAMES[st.lang][i])
+  
   ui.langBtn.setProperty(hmUI.prop.TEXT, isAr() ? 'اللغة: العربية' : 'Language: English')
-  ui.cityBtn.setProperty(hmUI.prop.TEXT, (isAr() ? 'المدينة: ' : 'City: ') + CITIES[st.city][st.lang])
-  ui.coords.setProperty(hmUI.prop.TEXT, CITIES[st.city].lat.toFixed(4) + ', ' + CITIES[st.city].lon.toFixed(4))
   ui.done.setProperty(hmUI.prop.TEXT, isAr() ? 'تم' : 'Done')
-  ui.title.setProperty(hmUI.prop.TEXT, isAr() ? 'الإعدادات' : 'Settings')
+
+  const custom = isCustomRegion()
+  const regName = custom ? (isAr() ? 'موقع مخصص' : 'Custom Location') : REGIONS[st.reg][st.lang]
+  ui.regText.setProperty(hmUI.prop.TEXT, regName)
+
+  const loc = getCurrentLocation()
+  if (!custom) {
+    const total = REGIONS[st.reg].cities.length
+    ui.cityText.setProperty(hmUI.prop.TEXT, `${loc.name[st.lang]} (${st.city + 1}/${total})`)
+  }
+  ui.coords.setProperty(hmUI.prop.TEXT, `Lat: ${loc.lat.toFixed(4)}  |  Lon: ${loc.lon.toFixed(4)}`)
 }
 
 WatchFace({
@@ -121,17 +167,13 @@ WatchFace({
       rowTimes.push(T(1, 30, y, 150, 40, 30, C.fg, '--:--', LEFT))
     }
 
-    // طبقة اللمس: الضغط لفترة طويلة لفتح الإعدادات، والنقر العادي للتبديل بين الصفحات
+    // طبقة اللمس: الضغط المطول يفتح الإعدادات، النقر يبدل الصفحات
     ui.tap = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: 0, w: W, h: H, color: 0x000000, alpha: 0 })
     let longPressTimer = null
 
-    ui.tap.addEventListener(hmUI.event.CLICK_DOWN, (e) => {
+    ui.tap.addEventListener(hmUI.event.CLICK_DOWN, () => {
       if (settingsOpen) return
-      if (longPressTimer) {
-        stopTimer(longPressTimer)
-        longPressTimer = null
-      }
-      // المؤقت للضغط مطولاً (700 ملي ثانية) لفتح الإعدادات
+      if (longPressTimer) { stopTimer(longPressTimer); longPressTimer = null }
       longPressTimer = createTimer(700, 0, () => {
         longPressTimer = null
         settingsOpen = true
@@ -139,13 +181,11 @@ WatchFace({
       })
     })
 
-    ui.tap.addEventListener(hmUI.event.CLICK_UP, (e) => {
+    ui.tap.addEventListener(hmUI.event.CLICK_UP, () => {
       if (settingsOpen) return
       if (longPressTimer) {
-        // إذا تم رفع الإصبع قبل انتهاء المدى الزمني -> يعتبر نقراً عادياً للتبديل بين الصفحات
         stopTimer(longPressTimer)
         longPressTimer = null
-
         currentPage = 1 - currentPage
         st.page = currentPage
         save()
@@ -155,13 +195,63 @@ WatchFace({
     })
 
     // ---------- الصفحة 2: الإعدادات ----------
-    ui.title = T(2, 0, 20, 390, 50, 34, C.fg, 'Settings')
-    ui.langBtn = B(2, 30, 85, 330, 70, 0x2a2a30, 28, '', () => { st.lang = isAr() ? 'en' : 'ar'; save(); applyLang(); this.tick(true) })
-    ui.cityBtn = B(2, 30, 170, 330, 70, 0x2a2a30, 28, '', () => { st.city = (st.city + 1) % CITIES.length; save(); cacheKey = ''; applyLang(); this.tick(true) })
-    ui.coords = T(2, 0, 248, 390, 36, 22, C.dim, '')
-    ui.done = B(2, 30, 330, 330, 70, 0x1f8a3d, 30, '', () => { settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true) })
+    // 1. زر اللغة
+    ui.langBtn = B(2, 25, 25, 340, 52, 0x2a2a30, 24, '', () => {
+      st.lang = isAr() ? 'en' : 'ar'; save(); applyLang(); this.tick(true)
+    })
 
-    ui.langBtn.setProperty(hmUI.prop.TEXT, ''); applyLang()
+    // 2. شريط اختيار المنطقة / الدولة (< اسم المنطقة >)
+    const totalRegs = REGIONS.length + 1 // +1 للموقع المخصص
+    B(2, 25, 92, 60, 56, 0x2a2a30, 26, '<', () => {
+      st.reg = (st.reg - 1 + totalRegs) % totalRegs; st.city = 0
+      save(); cacheKey = ''; applyLang(); showPage(2); this.tick(true)
+    })
+    ui.regText = T(2, 90, 92, 210, 56, 24, C.blue, '')
+    B(2, 305, 92, 60, 56, 0x2a2a30, 26, '>', () => {
+      st.reg = (st.reg + 1) % totalRegs; st.city = 0
+      save(); cacheKey = ''; applyLang(); showPage(2); this.tick(true)
+    })
+
+    // 3. شريط اختيار المدينة (< اسم المدينة >)
+    ui.cityPrev = B(2, 25, 162, 60, 56, 0x2a2a30, 26, '<', () => {
+      const len = REGIONS[st.reg].cities.length
+      st.city = (st.city - 1 + len) % len
+      save(); cacheKey = ''; applyLang(); this.tick(true)
+    })
+    ui.cityText = T(2, 90, 162, 210, 56, 22, C.fg, '')
+    ui.cityNext = B(2, 305, 162, 60, 56, 0x2a2a30, 26, '>', () => {
+      const len = REGIONS[st.reg].cities.length
+      st.city = (st.city + 1) % len
+      save(); cacheKey = ''; applyLang(); this.tick(true)
+    })
+
+    // 3 (بديل). أزرار تعديل الإحداثيات للموقع المخصص
+    ui.latMinus = B(2, 25, 162, 78, 56, 0x3a3a40, 20, 'Lat-', () => {
+      st.lat = Math.max(-90, Math.round((st.lat - 0.1) * 10000) / 10000)
+      save(); cacheKey = ''; applyLang(); this.tick(true)
+    })
+    ui.latPlus = B(2, 110, 162, 78, 56, 0x3a3a40, 20, 'Lat+', () => {
+      st.lat = Math.min(90, Math.round((st.lat + 0.1) * 10000) / 10000)
+      save(); cacheKey = ''; applyLang(); this.tick(true)
+    })
+    ui.lonMinus = B(2, 202, 162, 78, 56, 0x3a3a40, 20, 'Lon-', () => {
+      st.lon = Math.max(-180, Math.round((st.lon - 0.1) * 10000) / 10000)
+      save(); cacheKey = ''; applyLang(); this.tick(true)
+    })
+    ui.lonPlus = B(2, 287, 162, 78, 56, 0x3a3a40, 20, 'Lon+', () => {
+      st.lon = Math.min(180, Math.round((st.lon + 0.1) * 10000) / 10000)
+      save(); cacheKey = ''; applyLang(); this.tick(true)
+    })
+
+    // 4. عرض الإحداثيات الحالية
+    ui.coords = T(2, 0, 235, 390, 36, 20, C.dim, '')
+
+    // 5. زر الحفظ والعودة
+    ui.done = B(2, 25, 340, 340, 68, 0x1f8a3d, 28, '', () => {
+      settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
+    })
+
+    applyLang()
     showPage(currentPage)
 
     this.sensors = {
@@ -182,12 +272,12 @@ WatchFace({
     let page = settingsOpen ? -1 : currentPage
     if (!settingsOpen) showPage(page)
 
-    const city = CITIES[st.city]
-    const key = Y + '-' + M + '-' + D + '-' + st.city
+    const loc = getCurrentLocation()
+    const key = `${Y}-${M}-${D}-${st.reg}-${st.city}-${loc.lat}-${loc.lon}`
     const hj = toHijri(Y, M, D, CFG.HIJRI_ADJUST)
     if (key !== cacheKey) {
       cacheKey = key
-      const o = { lat: city.lat, lon: city.lon, tz: CFG.TZ, adj: CFG.ADJ, ishaMin: hj.month === 9 ? 120 : 90 }
+      const o = { lat: loc.lat, lon: loc.lon, tz: CFG.TZ, adj: CFG.ADJ, ishaMin: hj.month === 9 ? 120 : 90 }
       today = getPrayerTimes(Y, M, D, o)
       const n = new Date(Y, M - 1, D + 1)
       tomorrow = getPrayerTimes(n.getFullYear(), n.getMonth() + 1, n.getDate(), o)
@@ -221,7 +311,7 @@ WatchFace({
       const left = target - nowSec
       ui.t2.setProperty(hmUI.prop.TEXT, time)
       ui.hij.setProperty(hmUI.prop.TEXT, hj.day + ' ' + hmonth + ' ' + hj.year)
-      ui.greg.setProperty(hmUI.prop.TEXT, D + '/' + M + '/' + Y + '  ·  ' + city[st.lang])
+      ui.greg.setProperty(hmUI.prop.TEXT, D + '/' + M + '/' + Y + '  ·  ' + loc.name[st.lang])
       ui.next.setProperty(hmUI.prop.TEXT, NAMES[st.lang][idx] + '   -' + pad(Math.floor(left / 3600)) + ':' + pad(Math.floor((left % 3600) / 60)) + ':' + pad(left % 60))
       for (let i = 0; i < 6; i++) {
         rowTimes[i].setProperty(hmUI.prop.TEXT, fmt(today[i]))
