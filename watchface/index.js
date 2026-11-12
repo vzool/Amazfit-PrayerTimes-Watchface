@@ -9,11 +9,9 @@ import { CITIES } from './cities'
 
 // ===== إعدادات ثابتة =====
 const CFG = {
-  PAGE_SECONDS: 4,                       // مدة بقاء كل صفحة بالثواني
   HIJRI_ADJUST: 1,                       // تعديل التاريخ الهجري (-1 / 0 / 1)
   TZ: 3,                                 // فرق التوقيت عن UTC (السعودية +3)
   ADJ: [-1, 0, 0, 0, 0, 0],              // تعديل دقائق: فجر، شروق، ظهر، عصر، مغرب، عشاء
-  CUSTOM: { lat: 24.7136, lon: 46.6753 } // إحداثيات "موقع مخصص" - عدّلها هنا
 }
 
 const NAMES = {
@@ -24,7 +22,7 @@ const HIJRI_EN = ['Muharram', 'Safar', 'Rabi I', 'Rabi II', 'Jumada I', 'Jumada 
 
 // ===== الحالة المحفوظة =====
 const store = new LocalStorage()
-let st = { lang: 'ar', city: 0 }
+let st = { lang: 'ar', city: 0, page: 0 }
 try { const s = JSON.parse(store.getItem('cfg')); if (s && CITIES[s.city]) st = s } catch (e) {}
 const save = () => { try { store.setItem('cfg', JSON.stringify(st)) } catch (e) {} }
 
@@ -64,6 +62,7 @@ function B(p, x, y, w, h, color, size, text, fn) {
 }
 
 let timer = null, ticks = 0, cacheKey = '', today = null, tomorrow = null, settingsOpen = false
+let currentPage = st.page !== undefined ? st.page : 0
 let ui = {}, rowRects = [], rowTimes = [], rowNames = []
 const safe = (fn, d) => { try { const v = fn(); return v === undefined || v === null ? d : v } catch (e) { return d } }
 
@@ -122,19 +121,48 @@ WatchFace({
       rowTimes.push(T(1, 30, y, 150, 40, 30, C.fg, '--:--', LEFT))
     }
 
-    // طبقة اللمس: تفتح صفحة الإعدادات (تُنشأ فوق الصفحتين 0 و1)
+    // طبقة اللمس: الضغط لفترة طويلة لفتح الإعدادات، والنقر العادي للتبديل بين الصفحات
     ui.tap = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: 0, w: W, h: H, color: 0x000000, alpha: 0 })
-    ui.tap.addEventListener(hmUI.event.CLICK_UP, () => { settingsOpen = true; showPage(2) })
+    let longPressTimer = null
+
+    ui.tap.addEventListener(hmUI.event.CLICK_DOWN, (e) => {
+      if (settingsOpen) return
+      if (longPressTimer) {
+        stopTimer(longPressTimer)
+        longPressTimer = null
+      }
+      // المؤقت للضغط مطولاً (700 ملي ثانية) لفتح الإعدادات
+      longPressTimer = createTimer(700, 0, () => {
+        longPressTimer = null
+        settingsOpen = true
+        showPage(2)
+      })
+    })
+
+    ui.tap.addEventListener(hmUI.event.CLICK_UP, (e) => {
+      if (settingsOpen) return
+      if (longPressTimer) {
+        // إذا تم رفع الإصبع قبل انتهاء المدى الزمني -> يعتبر نقراً عادياً للتبديل بين الصفحات
+        stopTimer(longPressTimer)
+        longPressTimer = null
+
+        currentPage = 1 - currentPage
+        st.page = currentPage
+        save()
+        showPage(currentPage)
+        this.tick(true)
+      }
+    })
 
     // ---------- الصفحة 2: الإعدادات ----------
     ui.title = T(2, 0, 20, 390, 50, 34, C.fg, 'Settings')
     ui.langBtn = B(2, 30, 85, 330, 70, 0x2a2a30, 28, '', () => { st.lang = isAr() ? 'en' : 'ar'; save(); applyLang(); this.tick(true) })
     ui.cityBtn = B(2, 30, 170, 330, 70, 0x2a2a30, 28, '', () => { st.city = (st.city + 1) % CITIES.length; save(); cacheKey = ''; applyLang(); this.tick(true) })
     ui.coords = T(2, 0, 248, 390, 36, 22, C.dim, '')
-    ui.done = B(2, 30, 330, 330, 70, 0x1f8a3d, 30, '', () => { settingsOpen = false; ticks = 0; showPage(0); this.tick(true) })
+    ui.done = B(2, 30, 330, 330, 70, 0x1f8a3d, 30, '', () => { settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true) })
 
     ui.langBtn.setProperty(hmUI.prop.TEXT, ''); applyLang()
-    showPage(0)
+    showPage(currentPage)
 
     this.sensors = {
       time: new Time(), hr: new HeartRate(), bat: new Battery(), step: new Step(),
@@ -151,8 +179,7 @@ WatchFace({
     const h = t.getHours(), mi = t.getMinutes(), se = t.getSeconds()
     if (!force) ticks++
 
-    let page = Math.floor(ticks / CFG.PAGE_SECONDS) % 2
-    if (settingsOpen) page = -1
+    let page = settingsOpen ? -1 : currentPage
     if (!settingsOpen) showPage(page)
 
     const city = CITIES[st.city]
