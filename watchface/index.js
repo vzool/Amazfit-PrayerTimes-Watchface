@@ -2,13 +2,14 @@ import * as hmUI from '@zos/ui'
 import { getDeviceInfo } from '@zos/device'
 import { createTimer, stopTimer } from '@zos/timer'
 import { LocalStorage } from '@zos/storage'
-import { Time, HeartRate, Battery, Step, Calorie, Distance, Stand, Pai, Weather } from '@zos/sensor'
+import { Time, HeartRate, Battery, Step, Calorie, Distance, Stand, Pai, Weather, BloodOxygen, Sleep } from '@zos/sensor'
 import { getPrayerTimes } from './prayer'
 import { toHijri, HIJRI_MONTHS } from './hijri'
 import { REGIONS } from './regions'
 
 // ===== إعدادات ثابتة =====
 const CFG = {
+  TI_TEST: false,                        // اختبار الصور: true يعرض أرقاماً ثابتة (57 و48) بدل بيانات النظام
   HIJRI_ADJUST: 1,                       // تعديل التاريخ الهجري (-1 / 0 / 1)
   TZ: 3,                                 // فرق التوقيت عن UTC (السعودية +3)
   ADJ: [-1, 0, 0, 0, 0, 0],              // تعديل دقائق: فجر، شروق، ظهر، عصر، مغرب، عشاء
@@ -22,7 +23,7 @@ const HIJRI_EN = ['Muharram', 'Safar', 'Rabi I', 'Rabi II', 'Jumada I', 'Jumada 
 
 // ===== الحالة المحفوظة =====
 const store = new LocalStorage()
-let st = { lang: 'ar', reg: 0, city: 0, page: 0, lat: 24.7136, lon: 46.6753 }
+let st = { lang: 'ar', reg: 0, city: 0, page: 0, lat: 24.7136, lon: 46.6753, rev: false }
 try {
   const s = JSON.parse(store.getItem('cfg'))
   if (s) {
@@ -30,6 +31,7 @@ try {
     if (s.reg !== undefined && s.reg >= 0 && s.reg <= REGIONS.length) st.reg = s.reg
     if (s.city !== undefined) st.city = s.city
     if (s.page !== undefined) st.page = s.page
+    if (s.rev !== undefined) st.rev = !!s.rev
     if (s.lat !== undefined) st.lat = s.lat
     if (s.lon !== undefined) st.lon = s.lon
   }
@@ -41,8 +43,14 @@ const sx = v => Math.round((v * W) / 390)
 const sy = v => Math.round((v * H) / 450)
 const C = { fg: 0xffffff, dim: 0x8a8a93, green: 0x31d158, blue: 0x0a84ff, orange: 0xffb020, lav: 0xd9cdf2 }
 const pad = n => (n < 10 ? '0' : '') + n
-const fmt = m => { m = ((m % 1440) + 1440) % 1440; return Math.floor(m / 60) + ':' + pad(m % 60) }
+const fmt = m => { m = ((m % 1440) + 1440) % 1440; return pad(Math.floor(m / 60)) + ':' + pad(m % 60) }
 const isAr = () => st.lang === 'ar'
+// أسهم الإعدادات: الواجهة عربية (RTL) فيعكس النظام رمزي < و> عند العرض، لذلك الرمز المكتوب عكس ما يظهر.
+// الوضع العادي: الزر الأيسر يظهر "<" ويذهب للتالي، والأيمن يظهر ">" ويذهب للسابق. الوضع المعكوس: العكس (خيار في الإعدادات).
+const arrowL = () => (st.rev ? '<' : '>')
+const arrowR = () => (st.rev ? '>' : '<')
+// اتجاه الزر الأيسر: عربي = للأمام (+1)، إنجليزي = للخلف (-1)، والخيار "معكوس" يقلب النتيجة
+const stepL = () => (isAr() ? 1 : -1) * (st.rev ? -1 : 1)
 const LEFT = hmUI.align.LEFT, RIGHT = hmUI.align.RIGHT
 
 const pages = [[], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات
@@ -70,6 +78,25 @@ function B(p, x, y, w, h, color, size, text, fn) {
   pages[p].push(wd)
   return wd
 }
+
+// عنصر يعرض بيانات النظام مباشرة (HRV, BIO_CHARGE...) بصور أرقام. يرجع null إذا لم يدعم الجهاز النوع
+function TI(p, x, y, w, h, type, prefix, align, staticText, register) {
+  if (type === undefined && staticText === undefined) return null
+  try {
+    const wd = hmUI.createWidget(hmUI.widget.TEXT_IMG, {
+      x: sx(x), y: sy(y), w: sx(w), h: sy(h), ...(staticText === undefined ? { type } : {}),
+      font_array: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => prefix + i + '.png'),
+      invalid_image: prefix + 'dash.png', h_space: 0,
+      ...(staticText !== undefined ? { text: staticText } : {}),
+      align_h: align === undefined ? hmUI.align.CENTER_H : align, align_v: hmUI.align.CENTER_V,
+      show_level: hmUI.show_level.ONLY_NORMAL,
+    })
+    if (wd && register !== false) pages[p].push(wd)
+    console.log('TI ok type=' + type + ' prefix=' + prefix)
+    return wd
+  } catch (e) { console.log('TI err ' + e); return null }
+}
+const DT = (() => { try { return hmUI.data_type || {} } catch (e) { return {} } })()
 
 let timer = null, ticks = 0, cacheKey = '', today = null, tomorrow = null, settingsOpen = false
 let currentPage = st.page !== undefined ? st.page : 0
@@ -115,6 +142,8 @@ function applyLang() {
   
   ui.langBtn.setProperty(hmUI.prop.TEXT, isAr() ? 'اللغة: العربية' : 'Language: English')
   ui.done.setProperty(hmUI.prop.TEXT, isAr() ? 'تم' : 'Done')
+  ui.arrBtn.setProperty(hmUI.prop.TEXT, (isAr() ? 'الأسهم: ' : 'Arrows: ') + (st.rev ? (isAr() ? 'معكوس' : 'Reversed') : (isAr() ? 'عادي' : 'Normal')))
+  for (const [b, f] of [[ui.regL, arrowL], [ui.cityPrev, arrowL], [ui.regR, arrowR], [ui.cityNext, arrowR]]) b.setProperty(hmUI.prop.TEXT, f())
 
   const custom = isCustomRegion()
   const regName = custom ? (isAr() ? 'موقع مخصص' : 'Custom Location') : REGIONS[st.reg][st.lang]
@@ -135,8 +164,9 @@ WatchFace({
     // ---------- الصفحة 0: لوحة البيانات ----------
     ui.hr = T(0, 20, 30, 100, 50, 44, C.fg, '--', LEFT)
     T(0, 118, 30, 90, 50, 16, C.dim, ['نبض القلب', 'HEART\nRATE'], LEFT)
-    ui.batL = T(0, 20, 88, 100, 50, 44, C.fg, '--', LEFT)
-    T(0, 118, 88, 90, 50, 16, C.dim, ['البطارية', 'BATTERY'], LEFT)
+    // Hybrid Charge: ثابت BIO_CHARGE في data_type (يعرضه النظام تلقائياً)
+    ui.hyb = TI(0, 20, 88, 100, 50, DT.BIO_CHARGE, 'hb', LEFT, CFG.TI_TEST ? '57' : undefined, true) || T(0, 20, 88, 100, 50, 44, C.fg, '--', LEFT)
+    T(0, 118, 88, 120, 50, 15, C.dim, ['شحن هجين', 'HYBRID\nCHARGE'], LEFT)
     ui.stand = T(0, 15, 160, 90, 36, 28, C.fg, '--', LEFT)
     T(0, 15, 192, 90, 20, 14, C.dim, ['وقوف', 'STAND'], LEFT)
     ui.dist = T(0, 110, 160, 90, 36, 28, C.fg, '--', LEFT)
@@ -150,10 +180,15 @@ WatchFace({
     R(0, 20, 330, 200, 44, C.green, 22)
     ui.pow = T(0, 20, 330, 200, 44, 26, 0x000000, 'POWER')
     ui.temp = T(0, 235, 330, 140, 44, 34, C.fg, '--°')
-    ui.pai = T(0, 20, 392, 110, 40, 30, C.fg, '--', LEFT)
-    T(0, 20, 424, 110, 20, 14, C.dim, 'PAI', LEFT)
-    ui.sec = T(0, 150, 392, 100, 40, 28, C.dim, '00')
-    ui.hdate = T(0, 200, 392, 180, 40, 22, C.blue, '', RIGHT)
+    ui.hdate = T(0, 15, 290, 190, 34, 22, C.blue, '', LEFT)   // مكان W-RUN مؤقتاً
+    ui.spo2 = T(0, 8, 384, 94, 36, 28, C.fg, '--')
+    T(0, 8, 416, 94, 20, 14, C.dim, 'SPO2')
+    ui.pai = T(0, 102, 384, 94, 36, 28, C.fg, '--')
+    T(0, 102, 416, 94, 20, 14, C.dim, 'PAI')
+    ui.hrv = TI(0, 196, 384, 94, 36, DT.HRV, 'hs', undefined, CFG.TI_TEST ? '48' : undefined, true) || T(0, 196, 392, 98, 36, 28, C.fg, '--')
+    T(0, 196, 416, 94, 20, 14, C.dim, 'HRV')
+    ui.slp = T(0, 290, 384, 92, 36, 28, C.fg, '--')
+    T(0, 290, 416, 92, 20, 14, C.dim, ['النوم', 'SLEEP'])
 
     // ---------- الصفحة 1: مواقيت الصلاة ----------
     ui.t2 = T(1, 0, 8, 390, 70, 64, C.fg, '00:00')
@@ -202,26 +237,26 @@ WatchFace({
 
     // 2. شريط اختيار المنطقة / الدولة (< اسم المنطقة >)
     const totalRegs = REGIONS.length + 1 // +1 للموقع المخصص
-    B(2, 25, 92, 60, 56, 0x2a2a30, 26, '<', () => {
-      st.reg = (st.reg - 1 + totalRegs) % totalRegs; st.city = 0
+    ui.regL = B(2, 25, 92, 60, 56, 0x2a2a30, 26, arrowL(), () => {
+      st.reg = (st.reg + stepL() + totalRegs) % totalRegs; st.city = 0
       save(); cacheKey = ''; applyLang(); showPage(2); this.tick(true)
     })
     ui.regText = T(2, 90, 92, 210, 56, 24, C.blue, '')
-    B(2, 305, 92, 60, 56, 0x2a2a30, 26, '>', () => {
-      st.reg = (st.reg + 1) % totalRegs; st.city = 0
+    ui.regR = B(2, 305, 92, 60, 56, 0x2a2a30, 26, arrowR(), () => {
+      st.reg = (st.reg - stepL() + totalRegs) % totalRegs; st.city = 0
       save(); cacheKey = ''; applyLang(); showPage(2); this.tick(true)
     })
 
     // 3. شريط اختيار المدينة (< اسم المدينة >)
-    ui.cityPrev = B(2, 25, 162, 60, 56, 0x2a2a30, 26, '<', () => {
+    ui.cityPrev = B(2, 25, 162, 60, 56, 0x2a2a30, 26, arrowL(), () => {   // الزر الأيسر
       const len = REGIONS[st.reg].cities.length
-      st.city = (st.city - 1 + len) % len
+      st.city = (st.city + stepL() + len) % len
       save(); cacheKey = ''; applyLang(); this.tick(true)
     })
     ui.cityText = T(2, 90, 162, 210, 56, 22, C.fg, '')
-    ui.cityNext = B(2, 305, 162, 60, 56, 0x2a2a30, 26, '>', () => {
+    ui.cityNext = B(2, 305, 162, 60, 56, 0x2a2a30, 26, arrowR(), () => {   // الزر الأيمن
       const len = REGIONS[st.reg].cities.length
-      st.city = (st.city + 1) % len
+      st.city = (st.city - stepL() + len) % len
       save(); cacheKey = ''; applyLang(); this.tick(true)
     })
 
@@ -246,6 +281,11 @@ WatchFace({
     // 4. عرض الإحداثيات الحالية
     ui.coords = T(2, 0, 235, 390, 36, 20, C.dim, '')
 
+    // 4b. عكس اتجاه الأسهم
+    ui.arrBtn = B(2, 25, 275, 340, 50, 0x2a2a30, 22, '', () => {
+      st.rev = !st.rev; save(); applyLang()
+    })
+
     // 5. زر الحفظ والعودة
     ui.done = B(2, 25, 340, 340, 68, 0x1f8a3d, 28, '', () => {
       settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
@@ -254,9 +294,18 @@ WatchFace({
     applyLang()
     showPage(currentPage)
 
+    // تشخيص: كل ثوابت data_type بقيمها (ابحث عن اسم W-RUN)
+    // (الـ Console يقطع السطر عند ~1000 حرف، لذلك تُطبع على دفعات من 10)
+    try {
+      const dt = hmUI.data_type, names = Object.getOwnPropertyNames(dt)
+      for (let i = 0; i < names.length; i += 10) console.log('DT_ALL[' + i + ']: ' + names.slice(i, i + 10).map(n => n + '=' + dt[n]).join(' '))
+    } catch (e) {}
+
+    const mk = K => { try { return new K() } catch (e) { return null } }
     this.sensors = {
-      time: new Time(), hr: new HeartRate(), bat: new Battery(), step: new Step(),
-      cal: new Calorie(), dist: new Distance(), stand: new Stand(), pai: new Pai(), weather: new Weather(),
+      time: new Time(), hr: mk(HeartRate), bat: mk(Battery), step: mk(Step),
+      cal: mk(Calorie), dist: mk(Distance), stand: mk(Stand), pai: mk(Pai), weather: mk(Weather),
+      spo2: mk(BloodOxygen), sleep: mk(Sleep),
     }
     this.tick()
     timer = createTimer(1000, 1000, () => this.tick())
@@ -288,25 +337,30 @@ WatchFace({
     if (page === 0 || force) {
       ui.hh.setProperty(hmUI.prop.TEXT, pad(h))
       ui.mm.setProperty(hmUI.prop.TEXT, pad(mi))
-      ui.sec.setProperty(hmUI.prop.TEXT, pad(se))
       ui.hdate.setProperty(hmUI.prop.TEXT, hj.day + ' ' + hmonth)
       if (ticks % 5 === 1 || force) {
         ui.hr.setProperty(hmUI.prop.TEXT, '' + safe(() => s.hr.getLast(), '--'))
         const b = safe(() => s.bat.getCurrent(), 0)
-        ui.batL.setProperty(hmUI.prop.TEXT, b + '%')
         ui.pow.setProperty(hmUI.prop.TEXT, (isAr() ? 'الطاقة ' : 'POWER ') + b + '%')
         ui.steps.setProperty(hmUI.prop.TEXT, '' + safe(() => s.step.getCurrent(), 0))
         ui.kcal.setProperty(hmUI.prop.TEXT, '' + safe(() => s.cal.getCurrent(), 0))
         ui.dist.setProperty(hmUI.prop.TEXT, safe(() => s.dist.getCurrent() / 1000, 0).toFixed(2))
         ui.stand.setProperty(hmUI.prop.TEXT, pad(safe(() => s.stand.getCurrent(), 0)) + '/' + pad(safe(() => s.stand.getTarget(), 12)))
         ui.pai.setProperty(hmUI.prop.TEXT, '' + Math.round(safe(() => s.pai.getTotal(), 0)))
+        ui.spo2.setProperty(hmUI.prop.TEXT, safe(() => {
+          const r = s.spo2.getCurrent()
+          if (r.retCode === 2 && r.value > 0) return r.value + '%'
+          const d = s.spo2.getLastDay().filter(v => v > 0)
+          return d.length ? d[d.length - 1] + '%' : '--'
+        }, '--'))
+        ui.slp.setProperty(hmUI.prop.TEXT, safe(() => { const sc = s.sleep.getInfo().score; return sc > 0 ? '' + sc : '--' }, '--'))
         ui.temp.setProperty(hmUI.prop.TEXT, safe(() => s.weather.getForecast().forecastData.data[0].high, '--') + '°')
       }
     }
     if (page === 1 || force) {
       const nowSec = h * 3600 + mi * 60 + se
       let idx = -1, target = 0
-      for (const i of [0, 2, 3, 4, 5]) if (today[i] * 60 > nowSec) { idx = i; target = today[i] * 60; break }
+      for (let i = 0; i < 6; i++) if (today[i] * 60 > nowSec) { idx = i; target = today[i] * 60; break }
       if (idx < 0) { idx = 0; target = (tomorrow[0] + 1440) * 60 }
       const left = target - nowSec
       ui.t2.setProperty(hmUI.prop.TEXT, time)
