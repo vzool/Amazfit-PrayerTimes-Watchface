@@ -19,11 +19,17 @@ const NAMES = {
   ar: ['الفجر', 'الشروق', 'الظهر', 'العصر', 'المغرب', 'العشاء'],
   en: ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'],
 }
+const WEEKDAYS = {
+  ar: ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'],
+  en: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+}
 const HIJRI_EN = ['Muharram', 'Safar', 'Rabi I', 'Rabi II', 'Jumada I', 'Jumada II', 'Rajab', "Sha'ban", 'Ramadan', 'Shawwal', "Dhu al-Qi'dah", 'Dhu al-Hijjah']
 
 // ===== الحالة المحفوظة =====
 const store = new LocalStorage()
-let st = { lang: 'ar', reg: 0, city: 0, page: 0, lat: 24.7136, lon: 46.6753, rev: false }
+// الفاصل بين الأذان والإقامة بالدقائق (0-45) لكل صلاة على حدة: الفجر، الظهر، العصر، المغرب، العشاء
+const IQ_DEFAULT = [25, 20, 20, 10, 20]
+let st = { lang: 'ar', reg: 0, city: 0, page: 0, lat: 24.7136, lon: 46.6753, rev: false, iq: IQ_DEFAULT.slice() }
 try {
   const s = JSON.parse(store.getItem('cfg'))
   if (s) {
@@ -32,6 +38,7 @@ try {
     if (s.city !== undefined) st.city = s.city
     if (s.page !== undefined) st.page = s.page
     if (s.rev !== undefined) st.rev = !!s.rev
+    if (Array.isArray(s.iq) && s.iq.length === 5) st.iq = s.iq.map((v, i) => (Number.isFinite(v) ? Math.max(0, Math.min(45, Math.round(v))) : IQ_DEFAULT[i]))
     if (s.lat !== undefined) st.lat = s.lat
     if (s.lon !== undefined) st.lon = s.lon
   }
@@ -42,6 +49,9 @@ const { width: W, height: H } = getDeviceInfo()
 const sx = v => Math.round((v * W) / 390)
 const sy = v => Math.round((v * H) / 450)
 const C = { fg: 0xffffff, dim: 0x8a8a93, green: 0x31d158, blue: 0x0a84ff, orange: 0xffb020, lav: 0xd9cdf2 }
+// ألوان حالة ما بعد الأذان (أخضر / أصفر / برتقالي / أحمر)
+const IQC = { g: 0x31d158, y: 0xffd60a, o: 0xff8a1f, r: 0xff453a }
+const IQ_OF = { 0: 0, 2: 1, 3: 2, 4: 3, 5: 4 }   // فهرس الصلاة في مصفوفة المواقيت -> فهرس الفاصل
 const pad = n => (n < 10 ? '0' : '') + n
 const fmt = m => { m = ((m % 1440) + 1440) % 1440; return pad(Math.floor(m / 60)) + ':' + pad(m % 60) }
 const isAr = () => st.lang === 'ar'
@@ -53,7 +63,7 @@ const arrowR = () => (st.rev ? '>' : '<')
 const stepL = () => (isAr() ? 1 : -1) * (st.rev ? -1 : 1)
 const LEFT = hmUI.align.LEFT, RIGHT = hmUI.align.RIGHT
 
-const pages = [[], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات
+const pages = [[], [], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات، 3: ضبط الإقامة
 const labels = []            // نصوص ثنائية اللغة [عربي, إنجليزي]
 function T(p, x, y, w, h, size, color, text, align) {
   const wd = hmUI.createWidget(hmUI.widget.TEXT, {
@@ -98,9 +108,9 @@ function TI(p, x, y, w, h, type, prefix, align, staticText, register) {
 }
 const DT = (() => { try { return hmUI.data_type || {} } catch (e) { return {} } })()
 
-let timer = null, ticks = 0, cacheKey = '', today = null, tomorrow = null, settingsOpen = false
+let timer = null, ticks = 0, cacheKey = '', today = null, tomorrow = null, yesterday = null, settingsOpen = false
 let currentPage = st.page !== undefined ? st.page : 0
-let ui = {}, rowRects = [], rowTimes = [], rowNames = []
+let ui = {}, rowRects = [], rowTimes = [], rowNames = [], rowEl = [], rowElBg = [], iqNames = [], iqVals = []
 const safe = (fn, d) => { try { const v = fn(); return v === undefined || v === null ? d : v } catch (e) { return d } }
 
 function isCustomRegion() {
@@ -118,7 +128,7 @@ function getCurrentLocation() {
 
 function showPage(p) {
   pages.forEach((arr, i) => arr.forEach(w => w.setProperty(hmUI.prop.VISIBLE, i === p)))
-  if (ui.tap) ui.tap.setProperty(hmUI.prop.VISIBLE, p !== 2)
+  if (ui.tap) ui.tap.setProperty(hmUI.prop.VISIBLE, p < 2)
 
   if (p === 2) {
     const custom = isCustomRegion()
@@ -142,6 +152,10 @@ function applyLang() {
   
   ui.langBtn.setProperty(hmUI.prop.TEXT, isAr() ? 'اللغة: العربية' : 'Language: English')
   ui.done.setProperty(hmUI.prop.TEXT, isAr() ? 'تم' : 'Done')
+  ui.iqBtn.setProperty(hmUI.prop.TEXT, isAr() ? 'الإقامة' : 'Iqama')
+  ui.iqReset.setProperty(hmUI.prop.TEXT, isAr() ? 'إعادة الضبط' : 'Reset')
+  ui.iqBack.setProperty(hmUI.prop.TEXT, isAr() ? 'رجوع' : 'Back')
+  for (let k = 0; k < 5; k++) iqNames[k].setProperty(hmUI.prop.TEXT, NAMES[st.lang][[0, 2, 3, 4, 5][k]])
   ui.arrBtn.setProperty(hmUI.prop.TEXT, (isAr() ? 'الأسهم: ' : 'Arrows: ') + (st.rev ? (isAr() ? 'معكوس' : 'Reversed') : (isAr() ? 'عادي' : 'Normal')))
   for (const [b, f] of [[ui.regL, arrowL], [ui.cityPrev, arrowL], [ui.regR, arrowR], [ui.cityNext, arrowR]]) b.setProperty(hmUI.prop.TEXT, f())
 
@@ -200,6 +214,9 @@ WatchFace({
       rowRects.push(R(1, 14, y, 362, 40, 0x1f3d2a, 14))
       rowNames.push(T(1, 215, y, 150, 40, 28, C.fg, NAMES[st.lang][i], RIGHT))
       rowTimes.push(T(1, 30, y, 150, 40, 30, C.fg, '--:--', LEFT))
+      // عداد الإقامة: خلفية بلون الحالة ونص أسود
+      rowElBg.push(R(1, 141, y + 5, 104, 30, IQC.g, 15))
+      rowEl.push(T(1, 141, y, 104, 40, 20, 0x000000, '', hmUI.align.CENTER_H))
     }
 
     // طبقة اللمس: الضغط المطول يفتح الإعدادات، النقر يبدل الصفحات
@@ -282,11 +299,35 @@ WatchFace({
     ui.coords = T(2, 0, 235, 390, 36, 20, C.dim, '')
 
     // 4b. عكس اتجاه الأسهم
-    ui.arrBtn = B(2, 25, 275, 340, 50, 0x2a2a30, 22, '', () => {
+    ui.arrBtn = B(2, 25, 275, 165, 50, 0x2a2a30, 18, '', () => {
       st.rev = !st.rev; save(); applyLang()
     })
 
     // 5. زر الحفظ والعودة
+    ui.iqBtn = B(2, 200, 275, 165, 50, 0x2a2a30, 20, '', () => { showPage(3) })
+
+    // ---------- الصفحة 3: ضبط الفاصل بين الأذان والإقامة ----------
+    T(3, 0, 8, 390, 40, 19, C.dim, ['الفاصل بين الأذان والإقامة (دقيقة)', 'Adhan to Iqama interval (min)'])
+    const adj = (k, d) => {
+      st.iq[k] = Math.max(0, Math.min(45, st.iq[k] + d))
+      save(); iqVals[k].setProperty(hmUI.prop.TEXT, '' + st.iq[k]); this.tick(true)
+    }
+    for (let k = 0; k < 5; k++) {
+      const y = 56 + k * 52
+      B(3, 18, y, 48, 44, 0x2a2a30, 18, '-5', () => adj(k, -5))
+      B(3, 70, y, 48, 44, 0x2a2a30, 18, '-1', () => adj(k, -1))
+      iqVals.push(T(3, 122, y, 60, 44, 28, C.fg, '' + st.iq[k]))
+      B(3, 186, y, 48, 44, 0x2a2a30, 18, '+1', () => adj(k, 1))
+      B(3, 238, y, 48, 44, 0x2a2a30, 18, '+5', () => adj(k, 5))
+      iqNames.push(T(3, 290, y, 85, 44, 22, C.fg, '', RIGHT))
+    }
+    ui.iqReset = B(3, 25, 322, 165, 46, 0x5a2a2a, 20, '', () => {
+      st.iq = IQ_DEFAULT.slice(); save()
+      for (let k = 0; k < 5; k++) iqVals[k].setProperty(hmUI.prop.TEXT, '' + st.iq[k])
+      this.tick(true)
+    })
+    ui.iqBack = B(3, 200, 322, 165, 46, 0x1f8a3d, 22, '', () => { showPage(2) })
+
     ui.done = B(2, 25, 340, 340, 68, 0x1f8a3d, 28, '', () => {
       settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
     })
@@ -330,6 +371,8 @@ WatchFace({
       today = getPrayerTimes(Y, M, D, o)
       const n = new Date(Y, M - 1, D + 1)
       tomorrow = getPrayerTimes(n.getFullYear(), n.getMonth() + 1, n.getDate(), o)
+      const yd = new Date(Y, M - 1, D - 1)
+      yesterday = getPrayerTimes(yd.getFullYear(), yd.getMonth() + 1, yd.getDate(), o)
     }
     const hmonth = (isAr() ? HIJRI_MONTHS : HIJRI_EN)[hj.month - 1]
     const time = pad(h) + ':' + pad(mi)
@@ -364,12 +407,31 @@ WatchFace({
       if (idx < 0) { idx = 0; target = (tomorrow[0] + 1440) * 60 }
       const left = target - nowSec
       ui.t2.setProperty(hmUI.prop.TEXT, time)
-      ui.hij.setProperty(hmUI.prop.TEXT, hj.day + ' ' + hmonth + ' ' + hj.year)
-      ui.greg.setProperty(hmUI.prop.TEXT, D + '/' + M + '/' + Y + '  ·  ' + loc.name[st.lang])
+      ui.hij.setProperty(hmUI.prop.TEXT, pad(hj.day) + ' ' + hmonth + ' ' + hj.year)
+      ui.greg.setProperty(hmUI.prop.TEXT, WEEKDAYS[st.lang][new Date(Y, M - 1, D).getDay()] + '  ·  ' + D + '/' + M + '/' + Y + '  ·  ' + loc.name[st.lang])
       ui.next.setProperty(hmUI.prop.TEXT, NAMES[st.lang][idx] + '   -' + pad(Math.floor(left / 3600)) + ':' + pad(Math.floor((left % 3600) / 60)) + ':' + pad(left % 60))
+      // الصلاة الحالية (بين الأذان وما بعده): آخر صلاة دخل وقتها. الفجر ينتهي بالشروق، والعشاء بعد منتصف الليل تُحسب من أمس.
+      let cur = -1, elapsed = 0
+      for (const i of [0, 2, 3, 4, 5]) if (today[i] * 60 <= nowSec) cur = i
+      if (cur === -1) { cur = 5; elapsed = nowSec + 86400 - yesterday[5] * 60 }
+      else { elapsed = nowSec - today[cur] * 60; if (cur === 0 && nowSec >= today[1] * 60) cur = -1 }
+      const iv = cur >= 0 ? st.iq[IQ_OF[cur]] : 0   // 0 = الميزة معطلة لهذه الصلاة
+      let col = C.fg
+      if (iv > 0) { const m = elapsed / 60; col = m <= iv ? IQC.g : m <= 2 * iv ? IQC.y : m <= 3 * iv ? IQC.o : IQC.r }
+      const fe = x => (x >= 3600 ? pad(Math.floor(x / 3600)) + ':' + pad(Math.floor((x % 3600) / 60)) + ':' + pad(x % 60) : pad(Math.floor(x / 60)) + ':' + pad(x % 60))
+      // عداد الشروق المستقل: من الشروق حتى أذان الظهر (خلفية بيضاء ونص أسود)
+      const sunUp = nowSec >= today[1] * 60 && nowSec < today[2] * 60
+      const sunEl = nowSec - today[1] * 60
       for (let i = 0; i < 6; i++) {
+        const isCur = i === cur && iv > 0
+        const isSun = i === 1 && sunUp
         rowTimes[i].setProperty(hmUI.prop.TEXT, fmt(today[i]))
-        rowTimes[i].setProperty(hmUI.prop.COLOR, i === idx ? C.green : C.fg)
+        rowTimes[i].setProperty(hmUI.prop.COLOR, isCur ? col : C.fg)
+        if (!st.rev) rowEl[i].setProperty(hmUI.prop.TEXT, isCur ? fe(elapsed) + '+' : isSun ? fe(sunEl) + '+' : '')
+        else rowEl[i].setProperty(hmUI.prop.TEXT, isCur ? '+' + fe(elapsed) : isSun ? '+' + fe(sunEl) : '')
+        if (isCur) rowElBg[i].setProperty(hmUI.prop.COLOR, col)
+        else if (isSun) rowElBg[i].setProperty(hmUI.prop.COLOR, 0xffffff)
+        rowElBg[i].setProperty(hmUI.prop.VISIBLE, (isCur || isSun) && page === 1)
         rowRects[i].setProperty(hmUI.prop.VISIBLE, i === idx && page === 1)
       }
     }
