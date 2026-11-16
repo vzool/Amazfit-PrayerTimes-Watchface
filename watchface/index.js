@@ -4,8 +4,9 @@ import { createTimer, stopTimer } from '@zos/timer'
 import { LocalStorage } from '@zos/storage'
 import { Time, HeartRate, Battery, Step, Calorie, Distance, Stand, Pai, Weather, BloodOxygen, Sleep } from '@zos/sensor'
 import { getPrayerTimes } from './prayer'
-import { toHijri, HIJRI_MONTHS } from './hijri'
+import { toHijri } from './hijri'
 import { REGIONS } from './regions'
+import { lang } from './lang/index'
 
 // ===== إعدادات ثابتة =====
 const CFG = {
@@ -15,16 +16,6 @@ const CFG = {
   ADJ: [-1, 0, 0, 0, 0, 0],              // تعديل دقائق: فجر، شروق، ظهر، عصر، مغرب، عشاء
 }
 
-const NAMES = {
-  ar: ['الفجر', 'الشروق', 'الظهر', 'العصر', 'المغرب', 'العشاء'],
-  en: ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'],
-}
-const WEEKDAYS = {
-  ar: ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'],
-  en: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-}
-const HIJRI_EN = ['Muharram', 'Safar', 'Rabi I', 'Rabi II', 'Jumada I', 'Jumada II', 'Rajab', "Sha'ban", 'Ramadan', 'Shawwal', "Dhu al-Qi'dah", 'Dhu al-Hijjah']
-
 // ===== الحالة المحفوظة =====
 const store = new LocalStorage()
 // الفاصل بين الأذان والإقامة بالدقائق (0-45) لكل صلاة على حدة: الفجر، الظهر، العصر، المغرب، العشاء
@@ -33,7 +24,7 @@ let st = { lang: 'ar', reg: 0, city: 0, page: 0, lat: 24.7136, lon: 46.6753, rev
 try {
   const s = JSON.parse(store.getItem('cfg'))
   if (s) {
-    if (s.lang) st.lang = s.lang
+    if (s.lang && lang[s.lang]) st.lang = s.lang
     if (s.reg !== undefined && s.reg >= 0 && s.reg <= REGIONS.length) st.reg = s.reg
     if (s.city !== undefined) st.city = s.city
     if (s.page !== undefined) st.page = s.page
@@ -54,24 +45,30 @@ const IQC = { g: 0x31d158, y: 0xffd60a, o: 0xff8a1f, r: 0xff453a }
 const IQ_OF = { 0: 0, 2: 1, 3: 2, 4: 3, 5: 4 }   // فهرس الصلاة في مصفوفة المواقيت -> فهرس الفاصل
 const pad = n => (n < 10 ? '0' : '') + n
 const fmt = m => { m = ((m % 1440) + 1440) % 1440; return pad(Math.floor(m / 60)) + ':' + pad(m % 60) }
-const isAr = () => st.lang === 'ar'
+// ===== اللغة: كل النصوص في lang/ (ملف لكل لغة)، واتجاه الكتابة rtl داخل كل لغة =====
+const L = () => lang[st.lang] || lang.en
+const tr = k => { const v = L()[k]; return v !== undefined ? v : lang.en[k] }   // أي مفتاح ناقص يرجع للإنجليزية
+const isRTL = () => L().rtl === true
+const nm = o => o[st.lang] || o.en || o.ar          // اسم مترجم داخل regions.js (مع رجوع للإنجليزية)
+const LANGS = Object.keys(lang)                     // ترتيب التبديل بزر اللغة
 // أسهم الإعدادات: الواجهة عربية (RTL) فيعكس النظام رمزي < و> عند العرض، لذلك الرمز المكتوب عكس ما يظهر.
 // الوضع العادي: الزر الأيسر يظهر "<" ويذهب للتالي، والأيمن يظهر ">" ويذهب للسابق. الوضع المعكوس: العكس (خيار في الإعدادات).
 const arrowL = () => (st.rev ? '<' : '>')
 const arrowR = () => (st.rev ? '>' : '<')
-// اتجاه الزر الأيسر: عربي = للأمام (+1)، إنجليزي = للخلف (-1)، والخيار "معكوس" يقلب النتيجة
-const stepL = () => (isAr() ? 1 : -1) * (st.rev ? -1 : 1)
+// اتجاه الزر الأيسر: لغة RTL = للأمام (+1)، لغة LTR = للخلف (-1)، والخيار "معكوس" يقلب النتيجة
+const stepL = () => (isRTL() ? 1 : -1) * (st.rev ? -1 : 1)
 const LEFT = hmUI.align.LEFT, RIGHT = hmUI.align.RIGHT
 
 const pages = [[], [], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات، 3: ضبط الإقامة
-const labels = []            // نصوص ثنائية اللغة [عربي, إنجليزي]
+const labels = []            // نصوص مرتبطة بمفتاح لغة: { wd, k }
 function T(p, x, y, w, h, size, color, text, align) {
+  const key = text && typeof text === 'object' ? text.k : null   // text = { k: 'مفتاح' } يُترجم تلقائياً
   const wd = hmUI.createWidget(hmUI.widget.TEXT, {
     x: sx(x), y: sy(y), w: sx(w), h: sy(h), text_size: Math.round((size * W) / 390), color,
-    text: Array.isArray(text) ? text[1] : text,
+    text: key ? tr(key) : text,
     align_h: align === undefined ? hmUI.align.CENTER_H : align, align_v: hmUI.align.CENTER_V,
   })
-  if (Array.isArray(text)) labels.push({ wd, text })
+  if (key) labels.push({ wd, k: key })
   pages[p].push(wd)
   return wd
 }
@@ -87,6 +84,24 @@ function B(p, x, y, w, h, color, size, text, fn) {
   })
   pages[p].push(wd)
   return wd
+}
+
+// عناصر يعكسها اتجاه اللغة. التصميم الأصلي لـ RTL؛ في LTR: 'mirror' = انعكاس أفقي (الاسم/الوقت)،
+// 'shift' = إزاحة مجموعة كاملة (أزرار الإقامة) بنفس ترتيبها الداخلي.
+const dirItems = []
+const reg = (wd, x, w, align, mode, dx) => { dirItems.push({ wd, x, w, align, mode, dx: dx || 0 }); return wd }
+function applyDir() {
+  const rtl = isRTL()
+  for (const d of dirItems) {
+    let x = d.x, al = d.align
+    if (!rtl) {
+      if (d.mode === 'shift') x = d.x + d.dx
+      else { x = 390 - d.x - d.w; al = al === LEFT ? RIGHT : al === RIGHT ? LEFT : al }
+    }
+    const o = { x: sx(x), w: sx(d.w) }
+    if (al !== undefined) o.align_h = al
+    d.wd.setProperty(hmUI.prop.MORE, o)
+  }
 }
 
 // عنصر يعرض بيانات النظام مباشرة (HRV, BIO_CHARGE...) بصور أرقام. يرجع null إذا لم يدعم الجهاز النوع
@@ -119,11 +134,11 @@ function isCustomRegion() {
 
 function getCurrentLocation() {
   if (isCustomRegion()) {
-    return { lat: st.lat, lon: st.lon, name: { ar: 'موقع مخصص', en: 'Custom' } }
+    return { lat: st.lat, lon: st.lon, name: tr('customShort') }
   }
   const region = REGIONS[st.reg] || REGIONS[0]
   const c = region.cities[st.city] || region.cities[0]
-  return { lat: c.lat, lon: c.lon, name: c }
+  return { lat: c.lat, lon: c.lon, name: nm(c) }
 }
 
 function showPage(p) {
@@ -146,29 +161,34 @@ function showPage(p) {
 }
 
 function applyLang() {
-  const k = isAr() ? 0 : 1
-  labels.forEach(l => l.wd.setProperty(hmUI.prop.TEXT, l.text[k]))
-  for (let i = 0; i < 6; i++) rowNames[i].setProperty(hmUI.prop.TEXT, NAMES[st.lang][i])
-  
-  ui.langBtn.setProperty(hmUI.prop.TEXT, isAr() ? 'اللغة: العربية' : 'Language: English')
-  ui.done.setProperty(hmUI.prop.TEXT, isAr() ? 'تم' : 'Done')
-  ui.iqBtn.setProperty(hmUI.prop.TEXT, isAr() ? 'الإقامة' : 'Iqama')
-  ui.iqReset.setProperty(hmUI.prop.TEXT, isAr() ? 'إعادة الضبط' : 'Reset')
-  ui.iqBack.setProperty(hmUI.prop.TEXT, isAr() ? 'رجوع' : 'Back')
-  for (let k = 0; k < 5; k++) iqNames[k].setProperty(hmUI.prop.TEXT, NAMES[st.lang][[0, 2, 3, 4, 5][k]])
-  ui.arrBtn.setProperty(hmUI.prop.TEXT, (isAr() ? 'الأسهم: ' : 'Arrows: ') + (st.rev ? (isAr() ? 'معكوس' : 'Reversed') : (isAr() ? 'عادي' : 'Normal')))
+  labels.forEach(l => l.wd.setProperty(hmUI.prop.TEXT, tr(l.k)))
+  const pr = tr('prayers')
+  for (let i = 0; i < 6; i++) rowNames[i].setProperty(hmUI.prop.TEXT, pr[i])
+  for (let k = 0; k < 5; k++) iqNames[k].setProperty(hmUI.prop.TEXT, pr[[0, 2, 3, 4, 5][k]])
+
+  ui.langBtn.setProperty(hmUI.prop.TEXT, tr('language'))
+  ui.done.setProperty(hmUI.prop.TEXT, tr('done'))
+  ui.iqBtn.setProperty(hmUI.prop.TEXT, tr('iqama'))
+  ui.iqReset.setProperty(hmUI.prop.TEXT, tr('reset'))
+  ui.iqBack.setProperty(hmUI.prop.TEXT, tr('back'))
+  ui.arrBtn.setProperty(hmUI.prop.TEXT, tr('arrows') + (st.rev ? tr('arrowsReversed') : tr('arrowsNormal')))
   for (const [b, f] of [[ui.regL, arrowL], [ui.cityPrev, arrowL], [ui.regR, arrowR], [ui.cityNext, arrowR]]) b.setProperty(hmUI.prop.TEXT, f())
+  ui.latMinus.setProperty(hmUI.prop.TEXT, tr('lat') + '-')
+  ui.latPlus.setProperty(hmUI.prop.TEXT, tr('lat') + '+')
+  ui.lonMinus.setProperty(hmUI.prop.TEXT, tr('lon') + '-')
+  ui.lonPlus.setProperty(hmUI.prop.TEXT, tr('lon') + '+')
 
   const custom = isCustomRegion()
-  const regName = custom ? (isAr() ? 'موقع مخصص' : 'Custom Location') : REGIONS[st.reg][st.lang]
-  ui.regText.setProperty(hmUI.prop.TEXT, regName)
+  ui.regText.setProperty(hmUI.prop.TEXT, custom ? tr('customLocation') : nm(REGIONS[st.reg]))
 
   const loc = getCurrentLocation()
   if (!custom) {
     const total = REGIONS[st.reg].cities.length
-    ui.cityText.setProperty(hmUI.prop.TEXT, `${loc.name[st.lang]} (${st.city + 1}/${total})`)
+    ui.cityText.setProperty(hmUI.prop.TEXT, `${loc.name} (${st.city + 1}/${total})`)
   }
-  ui.coords.setProperty(hmUI.prop.TEXT, `Lat: ${loc.lat.toFixed(4)}  |  Lon: ${loc.lon.toFixed(4)}`)
+  ui.coords.setProperty(hmUI.prop.TEXT, `${tr('lat')}: ${loc.lat.toFixed(4)}  |  ${tr('lon')}: ${loc.lon.toFixed(4)}`)
+
+  applyDir()
 }
 
 WatchFace({
@@ -177,32 +197,32 @@ WatchFace({
 
     // ---------- الصفحة 0: لوحة البيانات ----------
     ui.hr = T(0, 20, 30, 100, 50, 44, C.fg, '--', LEFT)
-    T(0, 118, 30, 90, 50, 16, C.dim, ['نبض القلب', 'HEART\nRATE'], LEFT)
+    T(0, 118, 30, 90, 50, 16, C.dim, { k: 'heartRate' }, LEFT)
     // Hybrid Charge: ثابت BIO_CHARGE في data_type (يعرضه النظام تلقائياً)
     ui.hyb = TI(0, 20, 88, 100, 50, DT.BIO_CHARGE, 'hb', LEFT, CFG.TI_TEST ? '57' : undefined, true) || T(0, 20, 88, 100, 50, 44, C.fg, '--', LEFT)
-    T(0, 118, 88, 120, 50, 15, C.dim, ['شحن هجين', 'HYBRID\nCHARGE'], LEFT)
+    T(0, 118, 88, 120, 50, 15, C.dim, { k: 'hybrid' }, LEFT)
     ui.stand = T(0, 15, 160, 90, 36, 28, C.fg, '--', LEFT)
-    T(0, 15, 192, 90, 20, 14, C.dim, ['وقوف', 'STAND'], LEFT)
+    T(0, 15, 192, 90, 20, 14, C.dim, { k: 'stand' }, LEFT)
     ui.dist = T(0, 110, 160, 90, 36, 28, C.fg, '--', LEFT)
-    T(0, 110, 192, 90, 20, 14, C.dim, ['كم', 'KM'], LEFT)
+    T(0, 110, 192, 90, 20, 14, C.dim, { k: 'km' }, LEFT)
     ui.steps = T(0, 15, 225, 90, 36, 28, C.fg, '--', LEFT)
-    T(0, 15, 257, 90, 20, 14, C.dim, ['خطوات', 'STEPS'], LEFT)
+    T(0, 15, 257, 90, 20, 14, C.dim, { k: 'steps' }, LEFT)
     ui.kcal = T(0, 110, 225, 90, 36, 28, C.fg, '--', LEFT)
-    T(0, 110, 257, 90, 20, 14, C.dim, ['سعرات', 'KCAL'], LEFT)
+    T(0, 110, 257, 90, 20, 14, C.dim, { k: 'kcal' }, LEFT)
     ui.hh = T(0, 200, 20, 180, 170, 130, C.fg, '00')
     ui.mm = T(0, 200, 185, 180, 170, 130, C.lav, '00')
     R(0, 20, 330, 200, 44, C.green, 22)
-    ui.pow = T(0, 20, 330, 200, 44, 26, 0x000000, 'POWER')
+    ui.pow = T(0, 20, 330, 200, 44, 26, 0x000000, tr('power'))
     ui.temp = T(0, 235, 330, 140, 44, 34, C.fg, '--°')
     ui.hdate = T(0, 15, 290, 190, 34, 22, C.blue, '', LEFT)   // مكان W-RUN مؤقتاً
     ui.spo2 = T(0, 8, 384, 94, 36, 28, C.fg, '--')
-    T(0, 8, 416, 94, 20, 14, C.dim, 'SPO2')
+    T(0, 8, 416, 94, 20, 14, C.dim, { k: 'spo2' })
     ui.pai = T(0, 102, 384, 94, 36, 28, C.fg, '--')
-    T(0, 102, 416, 94, 20, 14, C.dim, 'PAI')
+    T(0, 102, 416, 94, 20, 14, C.dim, { k: 'pai' })
     ui.hrv = TI(0, 196, 384, 94, 36, DT.HRV, 'hs', undefined, CFG.TI_TEST ? '48' : undefined, true) || T(0, 196, 392, 98, 36, 28, C.fg, '--')
-    T(0, 196, 416, 94, 20, 14, C.dim, 'HRV')
+    T(0, 196, 416, 94, 20, 14, C.dim, { k: 'hrv' })
     ui.slp = T(0, 290, 384, 92, 36, 28, C.fg, '--')
-    T(0, 290, 416, 92, 20, 14, C.dim, ['النوم', 'SLEEP'])
+    T(0, 290, 416, 92, 20, 14, C.dim, { k: 'sleep' })
 
     // ---------- الصفحة 1: مواقيت الصلاة ----------
     ui.t2 = T(1, 0, 8, 390, 70, 64, C.fg, '00:00')
@@ -212,8 +232,8 @@ WatchFace({
     for (let i = 0; i < 6; i++) {
       const y = 194 + i * 42
       rowRects.push(R(1, 14, y, 362, 40, 0x1f3d2a, 14))
-      rowNames.push(T(1, 215, y, 150, 40, 28, C.fg, NAMES[st.lang][i], RIGHT))
-      rowTimes.push(T(1, 30, y, 150, 40, 30, C.fg, '--:--', LEFT))
+      rowNames.push(reg(T(1, 215, y, 150, 40, 28, C.fg, tr('prayers')[i], RIGHT), 215, 150, RIGHT, 'mirror'))
+      rowTimes.push(reg(T(1, 30, y, 150, 40, 30, C.fg, '--:--', LEFT), 30, 150, LEFT, 'mirror'))
       // عداد الإقامة: خلفية بلون الحالة ونص أسود
       rowElBg.push(R(1, 141, y + 5, 104, 30, IQC.g, 15))
       rowEl.push(T(1, 141, y, 104, 40, 20, 0x000000, '', hmUI.align.CENTER_H))
@@ -249,7 +269,7 @@ WatchFace({
     // ---------- الصفحة 2: الإعدادات ----------
     // 1. زر اللغة
     ui.langBtn = B(2, 25, 25, 340, 52, 0x2a2a30, 24, '', () => {
-      st.lang = isAr() ? 'en' : 'ar'; save(); applyLang(); this.tick(true)
+      st.lang = LANGS[(LANGS.indexOf(st.lang) + 1) % LANGS.length]; save(); applyLang(); this.tick(true)
     })
 
     // 2. شريط اختيار المنطقة / الدولة (< اسم المنطقة >)
@@ -307,19 +327,21 @@ WatchFace({
     ui.iqBtn = B(2, 200, 275, 165, 50, 0x2a2a30, 20, '', () => { showPage(3) })
 
     // ---------- الصفحة 3: ضبط الفاصل بين الأذان والإقامة ----------
-    T(3, 0, 8, 390, 40, 19, C.dim, ['الفاصل بين الأذان والإقامة (دقيقة)', 'Adhan to Iqama interval (min)'])
+    T(3, 0, 8, 390, 40, 19, C.dim, { k: 'iqTitle' })
     const adj = (k, d) => {
       st.iq[k] = Math.max(0, Math.min(45, st.iq[k] + d))
       save(); iqVals[k].setProperty(hmUI.prop.TEXT, '' + st.iq[k]); this.tick(true)
     }
     for (let k = 0; k < 5; k++) {
       const y = 56 + k * 52
-      B(3, 18, y, 48, 44, 0x2a2a30, 18, '-5', () => adj(k, -5))
-      B(3, 70, y, 48, 44, 0x2a2a30, 18, '-1', () => adj(k, -1))
-      iqVals.push(T(3, 122, y, 60, 44, 28, C.fg, '' + st.iq[k]))
-      B(3, 186, y, 48, 44, 0x2a2a30, 18, '+1', () => adj(k, 1))
-      B(3, 238, y, 48, 44, 0x2a2a30, 18, '+5', () => adj(k, 5))
-      iqNames.push(T(3, 290, y, 85, 44, 22, C.fg, '', RIGHT))
+      // RTL: الأزرار يساراً والاسم يميناً. LTR: الاسم يساراً والأزرار يميناً (إزاحة 86 مع بقاء ترتيب -5 -1 قيمة +1 +5)
+      reg(B(3, 18, y, 48, 44, 0x2a2a30, 18, '-5', () => adj(k, -5)), 18, 48, undefined, 'shift', 86)
+      reg(B(3, 70, y, 48, 44, 0x2a2a30, 18, '-1', () => adj(k, -1)), 70, 48, undefined, 'shift', 86)
+      const v = T(3, 122, y, 60, 44, 28, C.fg, '' + st.iq[k])
+      iqVals.push(reg(v, 122, 60, hmUI.align.CENTER_H, 'shift', 86))
+      reg(B(3, 186, y, 48, 44, 0x2a2a30, 18, '+1', () => adj(k, 1)), 186, 48, undefined, 'shift', 86)
+      reg(B(3, 238, y, 48, 44, 0x2a2a30, 18, '+5', () => adj(k, 5)), 238, 48, undefined, 'shift', 86)
+      iqNames.push(reg(T(3, 290, y, 85, 44, 22, C.fg, '', RIGHT), 290, 85, RIGHT, 'mirror'))
     }
     ui.iqReset = B(3, 25, 322, 165, 46, 0x5a2a2a, 20, '', () => {
       st.iq = IQ_DEFAULT.slice(); save()
@@ -374,7 +396,7 @@ WatchFace({
       const yd = new Date(Y, M - 1, D - 1)
       yesterday = getPrayerTimes(yd.getFullYear(), yd.getMonth() + 1, yd.getDate(), o)
     }
-    const hmonth = (isAr() ? HIJRI_MONTHS : HIJRI_EN)[hj.month - 1]
+    const hmonth = tr('hijriMonths')[hj.month - 1]
     const time = pad(h) + ':' + pad(mi)
 
     if (page === 0 || force) {
@@ -384,7 +406,7 @@ WatchFace({
       if (ticks % 5 === 1 || force) {
         ui.hr.setProperty(hmUI.prop.TEXT, '' + safe(() => s.hr.getLast(), '--'))
         const b = safe(() => s.bat.getCurrent(), 0)
-        ui.pow.setProperty(hmUI.prop.TEXT, (isAr() ? 'الطاقة ' : 'POWER ') + b + '%')
+        ui.pow.setProperty(hmUI.prop.TEXT, tr('power') + b + '%')
         ui.steps.setProperty(hmUI.prop.TEXT, '' + safe(() => s.step.getCurrent(), 0))
         ui.kcal.setProperty(hmUI.prop.TEXT, '' + safe(() => s.cal.getCurrent(), 0))
         ui.dist.setProperty(hmUI.prop.TEXT, safe(() => s.dist.getCurrent() / 1000, 0).toFixed(2))
@@ -408,8 +430,8 @@ WatchFace({
       const left = target - nowSec
       ui.t2.setProperty(hmUI.prop.TEXT, time)
       ui.hij.setProperty(hmUI.prop.TEXT, pad(hj.day) + ' ' + hmonth + ' ' + hj.year)
-      ui.greg.setProperty(hmUI.prop.TEXT, WEEKDAYS[st.lang][new Date(Y, M - 1, D).getDay()] + '  ·  ' + D + '/' + M + '/' + Y + '  ·  ' + loc.name[st.lang])
-      ui.next.setProperty(hmUI.prop.TEXT, NAMES[st.lang][idx] + '   -' + pad(Math.floor(left / 3600)) + ':' + pad(Math.floor((left % 3600) / 60)) + ':' + pad(left % 60))
+      ui.greg.setProperty(hmUI.prop.TEXT, tr('weekdays')[new Date(Y, M - 1, D).getDay()] + '  ·  ' + D + '/' + M + '/' + Y + '  ·  ' + loc.name)
+      ui.next.setProperty(hmUI.prop.TEXT, tr('prayers')[idx] + '   -' + pad(Math.floor(left / 3600)) + ':' + pad(Math.floor((left % 3600) / 60)) + ':' + pad(left % 60))
       // الصلاة الحالية (بين الأذان وما بعده): آخر صلاة دخل وقتها. الفجر ينتهي بالشروق، والعشاء بعد منتصف الليل تُحسب من أمس.
       let cur = -1, elapsed = 0
       for (const i of [0, 2, 3, 4, 5]) if (today[i] * 60 <= nowSec) cur = i
