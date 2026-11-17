@@ -89,6 +89,8 @@ function B(p, x, y, w, h, color, size, text, fn) {
 // عناصر يعكسها اتجاه اللغة. التصميم الأصلي لـ RTL؛ في LTR: 'mirror' = انعكاس أفقي (الاسم/الوقت)،
 // 'shift' = إزاحة مجموعة كاملة (أزرار الإقامة) بنفس ترتيبها الداخلي.
 const dirItems = []
+// الأزرار (BUTTON) لا تتجاوب مع تغيير الموضع، لذلك لكل زر نسختان (RTL وLTR) تُظهر إحداهما حسب اتجاه اللغة
+const dirBtns = []
 const reg = (wd, x, w, align, mode, dx) => { dirItems.push({ wd, x, w, align, mode, dx: dx || 0 }); return wd }
 function applyDir() {
   const rtl = isRTL()
@@ -144,6 +146,7 @@ function getCurrentLocation() {
 function showPage(p) {
   pages.forEach((arr, i) => arr.forEach(w => w.setProperty(hmUI.prop.VISIBLE, i === p)))
   if (ui.tap) ui.tap.setProperty(hmUI.prop.VISIBLE, p < 2)
+  if (p === 3) dirBtns.forEach(d => d.wd.setProperty(hmUI.prop.VISIBLE, d.rtl === isRTL()))
 
   if (p === 2) {
     const custom = isCustomRegion()
@@ -335,12 +338,16 @@ WatchFace({
     for (let k = 0; k < 5; k++) {
       const y = 56 + k * 52
       // RTL: الأزرار يساراً والاسم يميناً. LTR: الاسم يساراً والأزرار يميناً (إزاحة 86 مع بقاء ترتيب -5 -1 قيمة +1 +5)
-      reg(B(3, 18, y, 48, 44, 0x2a2a30, 18, '-5', () => adj(k, -5)), 18, 48, undefined, 'shift', 86)
-      reg(B(3, 70, y, 48, 44, 0x2a2a30, 18, '-1', () => adj(k, -1)), 70, 48, undefined, 'shift', 86)
+      const dual = (x, label, d) => {
+        dirBtns.push({ wd: B(3, x, y, 48, 44, 0x2a2a30, 18, label, () => adj(k, d)), rtl: true })
+        dirBtns.push({ wd: B(3, x + 86, y, 48, 44, 0x2a2a30, 18, label, () => adj(k, d)), rtl: false })
+      }
+      dual(18, '-5', -5)
+      dual(70, '-1', -1)
       const v = T(3, 122, y, 60, 44, 28, C.fg, '' + st.iq[k])
       iqVals.push(reg(v, 122, 60, hmUI.align.CENTER_H, 'shift', 86))
-      reg(B(3, 186, y, 48, 44, 0x2a2a30, 18, '+1', () => adj(k, 1)), 186, 48, undefined, 'shift', 86)
-      reg(B(3, 238, y, 48, 44, 0x2a2a30, 18, '+5', () => adj(k, 5)), 238, 48, undefined, 'shift', 86)
+      dual(186, '+1', 1)
+      dual(238, '+5', 5)
       iqNames.push(reg(T(3, 290, y, 85, 44, 22, C.fg, '', RIGHT), 290, 85, RIGHT, 'mirror'))
     }
     ui.iqReset = B(3, 25, 322, 165, 46, 0x5a2a2a, 20, '', () => {
