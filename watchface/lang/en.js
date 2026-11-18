@@ -35,4 +35,5 @@ export default {
   lat: 'Lat',
   lon: 'Lon',
   iqTitle: 'Adhan to Iqama interval (min)',
+  confirm: 'OK?',
 }

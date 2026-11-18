@@ -2,8 +2,9 @@ import * as hmUI from '@zos/ui'
 import { getDeviceInfo } from '@zos/device'
 import { createTimer, stopTimer } from '@zos/timer'
 import { LocalStorage } from '@zos/storage'
+import * as SENSOR from '@zos/sensor'
 import { Time, HeartRate, Battery, Step, Calorie, Distance, Stand, Pai, Weather, BloodOxygen, Sleep } from '@zos/sensor'
-import { getPrayerTimes } from './prayer'
+import { getPrayerTimes, jdn } from './prayer'
 import { toHijri } from './hijri'
 import { REGIONS } from './regions'
 import { lang } from './lang/index'
@@ -127,7 +128,63 @@ const DT = (() => { try { return hmUI.data_type || {} } catch (e) { return {} } 
 
 let timer = null, ticks = 0, cacheKey = '', today = null, tomorrow = null, yesterday = null, settingsOpen = false
 let currentPage = st.page !== undefined ? st.page : 0
-let ui = {}, rowRects = [], rowTimes = [], rowNames = [], rowEl = [], rowElBg = [], iqNames = [], iqVals = []
+let ui = {}, rowRects = [], rowTimes = [], rowNames = [], rowEl = [], rowElBg = [], rowElIn = [], iqNames = [], iqVals = []
+const rowTap = {}    // طبقات لمس صفوف الصلوات
+const dots = []      // نقاط خريطة السجل
+
+// ===== سجل أداء الصلوات =====
+// log.d[رقم اليوم] = [فجر, ظهر, عصر, مغرب, عشاء]؛ كل قيمة = مستوى*1000 + دقائق بعد الأذان (0 = غير مسجّلة).
+// المستوى (1 أخضر، 2 أصفر، 3 برتقالي، 4 أحمر) يُخزَّن لحظة التسجيل فلا يتغير لو عُدّلت الفواصل لاحقاً.
+let log = { s: 0, d: {} }   // s = أول يوم بدأ فيه التسجيل
+try { const l = JSON.parse(store.getItem('log')); if (l && l.d) log = l } catch (e) {}
+const logSave = () => { try { store.setItem('log', JSON.stringify(log)) } catch (e) {} }
+let logVer = 0, dotsSig = '', armRow = -1, armLeft = 0
+let cs = { cur: -1, elapsed: 0, lvl: 0, todayKey: 0, nowSec: 0, rk: () => 0 }   // حالة الصلاة الحالية (تُحدَّث كل ثانية)
+const PRI = [0, 2, 3, 4, 5]              // فهارس الصلوات في مصفوفة المواقيت (بدون الشروق)
+const PNEXT = { 0: 1, 2: 3, 3: 4, 4: 5 } // الوقت الذي تنتهي عنده نافذة كل صلاة
+const LVC = [0, IQC.g, IQC.y, IQC.o, IQC.r]
+const DOTC = { none: 0x1c1c1e, missed: 0x4a4a4f, pending: 0xa0a0a8 }   // لا بيانات/مستقبل، مضت بلا تسجيل، نافذتها مفتوحة
+
+const buzz = () => { try { const v = new SENSOR.Vibrator(); v.setMode(SENSOR.VIBRATOR_SCENE_SHORT_LIGHT); v.start() } catch (e) {} }
+const pruneLog = tk => { for (const k of Object.keys(log.d)) if (+k < tk - 40) delete log.d[k] }
+function markPrayer(i) {
+  if (cs.cur !== i || !cs.lvl) return
+  const key = cs.rk(i)
+  const day = log.d[key] || (log.d[key] = [0, 0, 0, 0, 0])
+  day[IQ_OF[i]] = cs.lvl * 1000 + Math.min(999, Math.floor(cs.elapsed / 60))
+  pruneLog(cs.todayKey); logVer++; logSave(); buzz()
+}
+function undoPrayer(i) {
+  const key = cs.rk(i), day = log.d[key]
+  if (!day || !day[IQ_OF[i]]) return
+  day[IQ_OF[i]] = 0
+  if (day.every(v => !v)) delete log.d[key]
+  logVer++; logSave(); buzz()
+}
+// لون خلية في الخريطة: ago = كم يوماً مضى، p = رقم الصلاة 0..4
+function dotColor(ago, p, nowSec, todayKey) {
+  const key = todayKey - ago
+  if (log.s && key < log.s) return DOTC.none
+  const v = (log.d[key] || [])[p] || 0
+  if (v) return LVC[Math.floor(v / 1000)]
+  const i = PRI[p]
+  if (ago === 0) {
+    if (today[i] * 60 > nowSec) return DOTC.none
+    const end = i === 5 ? Infinity : today[PNEXT[i]] * 60
+    return nowSec < end ? DOTC.pending : DOTC.missed
+  }
+  if (ago === 1 && i === 5 && nowSec < today[0] * 60) return DOTC.pending   // عشاء أمس قبل فجر اليوم
+  return DOTC.missed
+}
+// الأسبوع الأول (اليوم وما قبله حتى 6 أيام) يبدأ من جهة بدء القراءة ثم يستمر الأسبوع الثاني بعده:
+// RTL: اليوم في أقصى اليمين والأسبوع الثاني على اليسار. LTR: اليوم في أقصى اليسار والأسبوع الثاني على اليمين.
+function refreshDots(nowSec, todayKey) {
+  const rtl = isRTL()
+  for (const d of dots) {
+    const ago = rtl ? (d.side === 0 ? 13 - d.c : 6 - d.c) : (d.side === 0 ? d.c : 7 + d.c)
+    d.wd.setProperty(hmUI.prop.COLOR, dotColor(ago, d.p, nowSec, todayKey))
+  }
+}
 const safe = (fn, d) => { try { const v = fn(); return v === undefined || v === null ? d : v } catch (e) { return d } }
 
 function isCustomRegion() {
@@ -147,6 +204,7 @@ function showPage(p) {
   pages.forEach((arr, i) => arr.forEach(w => w.setProperty(hmUI.prop.VISIBLE, i === p)))
   if (ui.tap) ui.tap.setProperty(hmUI.prop.VISIBLE, p < 2)
   if (p === 3) dirBtns.forEach(d => d.wd.setProperty(hmUI.prop.VISIBLE, d.rtl === isRTL()))
+  if (p !== 1) for (const k in rowTap) rowTap[k].setProperty(hmUI.prop.VISIBLE, false)
 
   if (p === 2) {
     const custom = isCustomRegion()
@@ -239,7 +297,13 @@ WatchFace({
       rowTimes.push(reg(T(1, 30, y, 150, 40, 30, C.fg, '--:--', LEFT), 30, 150, LEFT, 'mirror'))
       // عداد الإقامة: خلفية بلون الحالة ونص أسود
       rowElBg.push(R(1, 141, y + 5, 104, 30, IQC.g, 15))
+      rowElIn.push(R(1, 143, y + 7, 100, 26, 0x000000, 13))   // تجعل الكبسولة مفرغة (مسجّلة)
       rowEl.push(T(1, 141, y, 104, 40, 20, 0x000000, '', hmUI.align.CENTER_H))
+    }
+
+    // خريطة النقاط: أسبوع على كل جانب من الساعة، 7 أيام (أعمدة) × 5 صلوات (صفوف) لكل جانب
+    for (let side = 0; side < 2; side++) for (let c = 0; c < 7; c++) for (let p = 0; p < 5; p++) {
+      dots.push({ wd: R(1, (side === 0 ? 20 : 295) + c * 11, 24 + p * 11, 9, 9, DOTC.none, 4), side, c, p })
     }
 
     // طبقة اللمس: الضغط المطول يفتح الإعدادات، النقر يبدل الصفحات
@@ -268,6 +332,24 @@ WatchFace({
         this.tick(true)
       }
     })
+
+    // طبقات لمس صفوف الصلوات (تُنشأ بعد طبقة الصفحة لتكون فوقها): نقرتان للتسجيل، ضغط مطول للتراجع
+    const hasRec = i => !!((log.d[cs.rk(i)] || [])[IQ_OF[i]])
+    const rowShort = i => {
+      if (cs.cur !== i || !cs.lvl || hasRec(i)) return
+      if (armRow === i && armLeft > 0) { markPrayer(i); armRow = -1; armLeft = 0 }
+      else { armRow = i; armLeft = 3 }
+      this.tick(true)
+    }
+    const rowLong = i => { if (hasRec(i)) { undoPrayer(i); this.tick(true) } }
+    for (const i of PRI) {
+      const lay = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: sx(14), y: sy(194 + i * 42), w: sx(362), h: sy(40), color: 0x000000, alpha: 0 })
+      lay.setProperty(hmUI.prop.VISIBLE, false)
+      let lp = null
+      lay.addEventListener(hmUI.event.CLICK_DOWN, () => { if (lp) stopTimer(lp); lp = createTimer(700, 0, () => { lp = null; rowLong(i) }) })
+      lay.addEventListener(hmUI.event.CLICK_UP, () => { if (lp) { stopTimer(lp); lp = null; rowShort(i) } })
+      rowTap[i] = lay
+    }
 
     // ---------- الصفحة 2: الإعدادات ----------
     // 1. زر اللغة
@@ -451,18 +533,43 @@ WatchFace({
       // عداد الشروق المستقل: من الشروق حتى أذان الظهر (خلفية بيضاء ونص أسود)
       const sunUp = nowSec >= today[1] * 60 && nowSec < today[2] * 60
       const sunEl = nowSec - today[1] * 60
+      // ----- سجل الأداء وحالة الكبسولات -----
+      const todayKey = jdn(Y, M, D)
+      if (!log.s) { log.s = todayKey; logSave() }
+      const rk = i => (i === 5 && nowSec < today[0] * 60 ? todayKey - 1 : todayKey)   // عشاء ما بعد منتصف الليل يتبع أمس
+      const lvl = iv > 0 ? (() => { const m = elapsed / 60; return m <= iv ? 1 : m <= 2 * iv ? 2 : m <= 3 * iv ? 3 : 4 })() : 0
+      cs = { cur, elapsed, lvl, todayKey, nowSec, rk }
+      if (!force && armLeft > 0 && --armLeft === 0) armRow = -1   // انتهت مهلة التأكيد
       for (let i = 0; i < 6; i++) {
+        const slot = IQ_OF[i]
+        const key = slot !== undefined ? rk(i) : 0
+        const rv = slot !== undefined ? (log.d[key] || [])[slot] || 0 : 0
         const isCur = i === cur && iv > 0
         const isSun = i === 1 && sunUp
+        const armed = isCur && !rv && armRow === i && armLeft > 0
+        let txt = '', bg = null, hollow = false, tcol = 0x000000
+        if (rv) {   // مسجّلة: كبسولة مفرغة بلون المستوى ووقت الأداء
+          const lv = Math.floor(rv / 1000), base = key === todayKey ? today[i] : yesterday[i]
+          txt = fmt(base + (rv % 1000)); bg = LVC[lv]; hollow = true; tcol = LVC[lv]
+        } else if (isCur) {   // معلّقة: كبسولة ممتلئة تعدّ، أو "تأكيد؟"
+          bg = col
+          txt = armed ? tr('confirm') : (!st.rev ? fe(elapsed) + '+' : '+' + fe(elapsed))
+        } else if (isSun) {   // عداد الشروق المستقل
+          bg = 0xffffff
+          txt = !st.rev ? fe(sunEl) + '+' : '+' + fe(sunEl)
+        }
         rowTimes[i].setProperty(hmUI.prop.TEXT, fmt(today[i]))
-        rowTimes[i].setProperty(hmUI.prop.COLOR, isCur ? col : C.fg)
-        if (!st.rev) rowEl[i].setProperty(hmUI.prop.TEXT, isCur ? fe(elapsed) + '+' : isSun ? fe(sunEl) + '+' : '')
-        else rowEl[i].setProperty(hmUI.prop.TEXT, isCur ? '+' + fe(elapsed) : isSun ? '+' + fe(sunEl) : '')
-        if (isCur) rowElBg[i].setProperty(hmUI.prop.COLOR, col)
-        else if (isSun) rowElBg[i].setProperty(hmUI.prop.COLOR, 0xffffff)
-        rowElBg[i].setProperty(hmUI.prop.VISIBLE, (isCur || isSun) && page === 1)
+        rowTimes[i].setProperty(hmUI.prop.COLOR, isCur && !rv ? col : C.fg)
+        rowEl[i].setProperty(hmUI.prop.TEXT, txt)
+        rowEl[i].setProperty(hmUI.prop.COLOR, tcol)
+        if (bg !== null) rowElBg[i].setProperty(hmUI.prop.COLOR, bg)
+        rowElBg[i].setProperty(hmUI.prop.VISIBLE, bg !== null && page === 1)
+        rowElIn[i].setProperty(hmUI.prop.VISIBLE, hollow && page === 1)
         rowRects[i].setProperty(hmUI.prop.VISIBLE, i === idx && page === 1)
+        if (rowTap[i]) rowTap[i].setProperty(hmUI.prop.VISIBLE, page === 1 && (!!rv || isCur))
       }
+      const sig = todayKey + ':' + Math.floor(nowSec / 60) + ':' + logVer + ':' + (isRTL() ? 1 : 0)
+      if (force || sig !== dotsSig) { dotsSig = sig; refreshDots(nowSec, todayKey) }
     }
   },
 

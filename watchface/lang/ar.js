@@ -35,4 +35,5 @@ export default {
   lat: 'Lat',
   lon: 'Lon',
   iqTitle: 'الفاصل بين الأذان والإقامة (دقيقة)',
+  confirm: 'تأكيد؟',
 }
