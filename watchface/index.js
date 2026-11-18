@@ -128,7 +128,12 @@ const DT = (() => { try { return hmUI.data_type || {} } catch (e) { return {} } 
 
 let timer = null, ticks = 0, cacheKey = '', today = null, tomorrow = null, yesterday = null, settingsOpen = false
 let currentPage = st.page !== undefined ? st.page : 0
-let ui = {}, rowRects = [], rowTimes = [], rowNames = [], rowEl = [], rowElBg = [], rowElIn = [], iqNames = [], iqVals = []
+let ui = {}, rowRects = [], rowTimes = [], rowNames = [], rowEl = [], rowElBg = [], iqNames = [], iqVals = []
+const rowTm = [], rowCh = [], rowChTx = []   // لكل صلاة: المؤقت الأبيض + شريحة الوقت المسجَّل
+// موضع المؤقت والشريحة بين وقت الأذان والاسم (تصميم RTL، ويُعكس تلقائياً في LTR)
+const TM = { x: 112, w: 80 }
+const CH = { x: 196, w: 66 }
+const CH_HINT = 0x6e6e73   // لون شريحة التلميح قبل التسجيل
 const rowTap = {}    // طبقات لمس صفوف الصلوات
 const dots = []      // نقاط خريطة السجل
 
@@ -295,10 +300,17 @@ WatchFace({
       rowRects.push(R(1, 14, y, 362, 40, 0x1f3d2a, 14))
       rowNames.push(reg(T(1, 215, y, 150, 40, 28, C.fg, tr('prayers')[i], RIGHT), 215, 150, RIGHT, 'mirror'))
       rowTimes.push(reg(T(1, 30, y, 150, 40, 30, C.fg, '--:--', LEFT), 30, 150, LEFT, 'mirror'))
-      // عداد الإقامة: خلفية بلون الحالة ونص أسود
-      rowElBg.push(R(1, 141, y + 5, 104, 30, IQC.g, 15))
-      rowElIn.push(R(1, 143, y + 7, 100, 26, 0x000000, 13))   // تجعل الكبسولة مفرغة (مسجّلة)
-      rowEl.push(T(1, 141, y, 104, 40, 20, 0x000000, '', hmUI.align.CENTER_H))
+      if (i === 1) {
+        // عداد الشروق المستقل: كبسولة بيضاء ونص أسود
+        rowElBg[1] = R(1, 141, y + 5, 104, 30, 0xffffff, 15)
+        rowEl[1] = T(1, 141, y, 104, 40, 20, 0x000000, '', hmUI.align.CENTER_H)
+      } else {
+        // المؤقت الأبيض (نص فقط) ثم شريحة مفرغة للوقت المسجَّل. المستطيلات لا تتحرك بتغيير الموضع، فلكل شريحة نسختان (RTL وLTR)
+        rowTm[i] = reg(T(1, TM.x, y, TM.w, 40, 15, C.fg, '', hmUI.align.CENTER_H), TM.x, TM.w, undefined, 'mirror')
+        const mk = x => ({ bg: R(1, x, y + 6, CH.w, 28, CH_HINT, 14), inn: R(1, x + 2, y + 8, CH.w - 4, 24, 0x000000, 12) })
+        rowCh[i] = { a: mk(CH.x), b: mk(390 - CH.x - CH.w) }
+        rowChTx[i] = reg(T(1, CH.x, y, CH.w, 40, 16, CH_HINT, '', hmUI.align.CENTER_H), CH.x, CH.w, undefined, 'mirror')
+      }
     }
 
     // خريطة النقاط: أسبوع على كل جانب من الساعة، 7 أيام (أعمدة) × 5 صلوات (صفوف) لكل جانب
@@ -545,27 +557,34 @@ WatchFace({
         const key = slot !== undefined ? rk(i) : 0
         const rv = slot !== undefined ? (log.d[key] || [])[slot] || 0 : 0
         const isCur = i === cur && iv > 0
-        const isSun = i === 1 && sunUp
         const armed = isCur && !rv && armRow === i && armLeft > 0
-        let txt = '', bg = null, hollow = false, tcol = 0x000000
-        if (rv) {   // مسجّلة: كبسولة مفرغة بلون المستوى ووقت الأداء
-          const lv = Math.floor(rv / 1000), base = key === todayKey ? today[i] : yesterday[i]
-          txt = fmt(base + (rv % 1000)); bg = LVC[lv]; hollow = true; tcol = LVC[lv]
-        } else if (isCur) {   // معلّقة: كبسولة ممتلئة تعدّ، أو "تأكيد؟"
-          bg = col
-          txt = armed ? tr('confirm') : (!st.rev ? fe(elapsed) + '+' : '+' + fe(elapsed))
-        } else if (isSun) {   // عداد الشروق المستقل
-          bg = 0xffffff
-          txt = !st.rev ? fe(sunEl) + '+' : '+' + fe(sunEl)
-        }
         rowTimes[i].setProperty(hmUI.prop.TEXT, fmt(today[i]))
-        rowTimes[i].setProperty(hmUI.prop.COLOR, isCur && !rv ? col : C.fg)
-        rowEl[i].setProperty(hmUI.prop.TEXT, txt)
-        rowEl[i].setProperty(hmUI.prop.COLOR, tcol)
-        if (bg !== null) rowElBg[i].setProperty(hmUI.prop.COLOR, bg)
-        rowElBg[i].setProperty(hmUI.prop.VISIBLE, bg !== null && page === 1)
-        rowElIn[i].setProperty(hmUI.prop.VISIBLE, hollow && page === 1)
+        rowTimes[i].setProperty(hmUI.prop.COLOR, C.fg)
         rowRects[i].setProperty(hmUI.prop.VISIBLE, i === idx && page === 1)
+        if (i === 1) {   // الشروق: عداد مستقل من الشروق حتى الظهر
+          if (sunUp) rowEl[1].setProperty(hmUI.prop.TEXT, !st.rev ? fe(sunEl) + '+' : '+' + fe(sunEl))
+          else rowEl[1].setProperty(hmUI.prop.TEXT, '')
+          rowElBg[1].setProperty(hmUI.prop.VISIBLE, sunUp && page === 1)
+          continue
+        }
+        // المؤقت الأبيض يعمل ما دامت نافذة الصلاة الحالية مفتوحة، حتى بعد التسجيل
+        rowTm[i].setProperty(hmUI.prop.TEXT, isCur ? (!st.rev ? fe(elapsed) + '+' : '+' + fe(elapsed)) : '')
+        // شريحة الوقت: مسجَّل = بلون المستوى ووقت الأداء، معلَّق = تلميح رمادي، "تأكيد؟" = أبيض
+        let on = false, cc = CH_HINT, ct = ''
+        if (rv) {
+          const lv = Math.floor(rv / 1000), base = key === todayKey ? today[i] : yesterday[i]
+          on = true; cc = LVC[lv]; ct = fmt(base + (rv % 1000))
+        } else if (isCur) {
+          on = true; cc = armed ? 0xffffff : CH_HINT; ct = armed ? tr('confirm') : '--:--'
+        }
+        rowChTx[i].setProperty(hmUI.prop.TEXT, on ? ct : '')
+        rowChTx[i].setProperty(hmUI.prop.COLOR, cc)
+        const rtl = isRTL()
+        for (const [v, show] of [[rowCh[i].a, rtl], [rowCh[i].b, !rtl]]) {
+          if (on) v.bg.setProperty(hmUI.prop.COLOR, cc)
+          v.bg.setProperty(hmUI.prop.VISIBLE, on && show && page === 1)
+          v.inn.setProperty(hmUI.prop.VISIBLE, on && show && page === 1)
+        }
         if (rowTap[i]) rowTap[i].setProperty(hmUI.prop.VISIBLE, page === 1 && (!!rv || isCur))
       }
       const sig = todayKey + ':' + Math.floor(nowSec / 60) + ':' + logVer + ':' + (isRTL() ? 1 : 0)
