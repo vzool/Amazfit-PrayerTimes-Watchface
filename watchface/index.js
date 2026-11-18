@@ -129,11 +129,10 @@ const DT = (() => { try { return hmUI.data_type || {} } catch (e) { return {} } 
 let timer = null, ticks = 0, cacheKey = '', today = null, tomorrow = null, yesterday = null, settingsOpen = false
 let currentPage = st.page !== undefined ? st.page : 0
 let ui = {}, rowRects = [], rowTimes = [], rowNames = [], rowEl = [], rowElBg = [], iqNames = [], iqVals = []
-const rowTm = [], rowCh = [], rowChTx = []   // لكل صلاة: المؤقت الأبيض + شريحة الوقت المسجَّل
-// موضع المؤقت والشريحة بين وقت الأذان والاسم (تصميم RTL، ويُعكس تلقائياً في LTR)
-const TM = { x: 112, w: 80 }
-const CH = { x: 196, w: 66 }
-const CH_HINT = 0x6e6e73   // لون شريحة التلميح قبل التسجيل
+const rowSlot = [], rowSlotTx = []   // عنصر واحد بين وقت الأذان والاسم: عداد أبيض أو وقت التسجيل
+// موضع العنصر (تصميم RTL، ويُعكس تلقائياً في LTR). الشريحة نسختان لأن المستطيل لا يتحرك.
+const SLOT = { x: 141, w: 104 }   // نفس موضع عداد الشروق وحجمه، في منتصف الصف
+const PEEK_SEC = 4                     // ثوانٍ يظهر فيها وقت التسجيل فوق عداد الصلاة الحالية
 const rowTap = {}    // طبقات لمس صفوف الصلوات
 const dots = []      // نقاط خريطة السجل
 
@@ -143,7 +142,7 @@ const dots = []      // نقاط خريطة السجل
 let log = { s: 0, d: {} }   // s = أول يوم بدأ فيه التسجيل
 try { const l = JSON.parse(store.getItem('log')); if (l && l.d) log = l } catch (e) {}
 const logSave = () => { try { store.setItem('log', JSON.stringify(log)) } catch (e) {} }
-let logVer = 0, dotsSig = '', armRow = -1, armLeft = 0
+let logVer = 0, dotsSig = '', armRow = -1, armLeft = 0, peekRow = -1, peekLeft = 0
 let cs = { cur: -1, elapsed: 0, lvl: 0, todayKey: 0, nowSec: 0, rk: () => 0 }   // حالة الصلاة الحالية (تُحدَّث كل ثانية)
 const PRI = [0, 2, 3, 4, 5]              // فهارس الصلوات في مصفوفة المواقيت (بدون الشروق)
 const PNEXT = { 0: 1, 2: 3, 3: 4, 4: 5 } // الوقت الذي تنتهي عنده نافذة كل صلاة
@@ -164,6 +163,7 @@ function undoPrayer(i) {
   if (!day || !day[IQ_OF[i]]) return
   day[IQ_OF[i]] = 0
   if (day.every(v => !v)) delete log.d[key]
+  if (peekRow === i) { peekRow = -1; peekLeft = 0 }
   logVer++; logSave(); buzz()
 }
 // لون خلية في الخريطة: ago = كم يوماً مضى، p = رقم الصلاة 0..4
@@ -305,11 +305,10 @@ WatchFace({
         rowElBg[1] = R(1, 141, y + 5, 104, 30, 0xffffff, 15)
         rowEl[1] = T(1, 141, y, 104, 40, 20, 0x000000, '', hmUI.align.CENTER_H)
       } else {
-        // المؤقت الأبيض (نص فقط) ثم شريحة مفرغة للوقت المسجَّل. المستطيلات لا تتحرك بتغيير الموضع، فلكل شريحة نسختان (RTL وLTR)
-        rowTm[i] = reg(T(1, TM.x, y, TM.w, 40, 15, C.fg, '', hmUI.align.CENTER_H), TM.x, TM.w, undefined, 'mirror')
-        const mk = x => ({ bg: R(1, x, y + 6, CH.w, 28, CH_HINT, 14), inn: R(1, x + 2, y + 8, CH.w - 4, 24, 0x000000, 12) })
-        rowCh[i] = { a: mk(CH.x), b: mk(390 - CH.x - CH.w) }
-        rowChTx[i] = reg(T(1, CH.x, y, CH.w, 40, 16, CH_HINT, '', hmUI.align.CENTER_H), CH.x, CH.w, undefined, 'mirror')
+        // عنصر واحد: نص العداد، وشريحة لوقت التسجيل أو التأكيد. المستطيل لا يتحرك فلكل شريحة نسختان (RTL وLTR)
+        const mk = x => ({ bg: R(1, x, y + 5, SLOT.w, 30, 0xffffff, 15), inn: R(1, x + 2, y + 7, SLOT.w - 4, 26, 0x000000, 13) })
+        rowSlot[i] = { a: mk(SLOT.x), b: mk(390 - SLOT.x - SLOT.w) }
+        rowSlotTx[i] = reg(T(1, SLOT.x, y, SLOT.w, 40, 15, C.fg, '', hmUI.align.CENTER_H), SLOT.x, SLOT.w, undefined, 'mirror')
       }
     }
 
@@ -345,12 +344,20 @@ WatchFace({
       }
     })
 
-    // طبقات لمس صفوف الصلوات (تُنشأ بعد طبقة الصفحة لتكون فوقها): نقرتان للتسجيل، ضغط مطول للتراجع
+    // طبقات لمس صفوف الصلوات: نقرتان للتسجيل، وبعد التسجيل نقرة تبدّل بين العداد ووقت التسجيل، والضغط المطول يتراجع
     const hasRec = i => !!((log.d[cs.rk(i)] || [])[IQ_OF[i]])
     const rowShort = i => {
+      if (cs.cur === i && cs.lvl && hasRec(i)) {
+        if (peekRow === i && peekLeft > 0) { peekRow = -1; peekLeft = 0 }
+        else { peekRow = i; peekLeft = PEEK_SEC }
+        this.tick(true)
+        return
+      }
       if (cs.cur !== i || !cs.lvl || hasRec(i)) return
-      if (armRow === i && armLeft > 0) { markPrayer(i); armRow = -1; armLeft = 0 }
-      else { armRow = i; armLeft = 3 }
+      if (armRow === i && armLeft > 0) {
+        markPrayer(i); armRow = -1; armLeft = 0
+        peekRow = i; peekLeft = PEEK_SEC
+      } else { armRow = i; armLeft = 3 }
       this.tick(true)
     }
     const rowLong = i => { if (hasRec(i)) { undoPrayer(i); this.tick(true) } }
@@ -552,6 +559,7 @@ WatchFace({
       const lvl = iv > 0 ? (() => { const m = elapsed / 60; return m <= iv ? 1 : m <= 2 * iv ? 2 : m <= 3 * iv ? 3 : 4 })() : 0
       cs = { cur, elapsed, lvl, todayKey, nowSec, rk }
       if (!force && armLeft > 0 && --armLeft === 0) armRow = -1   // انتهت مهلة التأكيد
+      if (!force && peekLeft > 0 && --peekLeft === 0) peekRow = -1
       for (let i = 0; i < 6; i++) {
         const slot = IQ_OF[i]
         const key = slot !== undefined ? rk(i) : 0
@@ -567,23 +575,26 @@ WatchFace({
           rowElBg[1].setProperty(hmUI.prop.VISIBLE, sunUp && page === 1)
           continue
         }
-        // المؤقت الأبيض يعمل ما دامت نافذة الصلاة الحالية مفتوحة، حتى بعد التسجيل
-        rowTm[i].setProperty(hmUI.prop.TEXT, isCur ? (!st.rev ? fe(elapsed) + '+' : '+' + fe(elapsed)) : '')
-        // شريحة الوقت: مسجَّل = بلون المستوى ووقت الأداء، معلَّق = تلميح رمادي، "تأكيد؟" = أبيض
-        let on = false, cc = CH_HINT, ct = ''
-        if (rv) {
+        // الصلاة الحالية: عداد أبيض. بعد التسجيل، النقرة تعرض وقت الأداء بلونه ثم يعود العداد.
+        // ما سواها: وقت التسجيل فقط، بلا عداد.
+        const peek = isCur && !!rv && peekRow === i && peekLeft > 0
+        let on = false, chip = false, cc = C.fg, ct = ''
+        if (rv && (!isCur || peek)) {
           const lv = Math.floor(rv / 1000), base = key === todayKey ? today[i] : yesterday[i]
-          on = true; cc = LVC[lv]; ct = fmt(base + (rv % 1000))
+          on = true; chip = true; cc = LVC[lv]; ct = fmt(base + (rv % 1000))
+        } else if (isCur && armed) {
+          on = true; chip = true; cc = 0xffffff; ct = tr('confirm')
         } else if (isCur) {
-          on = true; cc = armed ? 0xffffff : CH_HINT; ct = armed ? tr('confirm') : '--:--'
+          on = true; ct = !st.rev ? fe(elapsed) + '+' : '+' + fe(elapsed)
         }
-        rowChTx[i].setProperty(hmUI.prop.TEXT, on ? ct : '')
-        rowChTx[i].setProperty(hmUI.prop.COLOR, cc)
+        rowSlotTx[i].setProperty(hmUI.prop.TEXT, on ? ct : '')
+        rowSlotTx[i].setProperty(hmUI.prop.COLOR, cc)
+        rowSlotTx[i].setProperty(hmUI.prop.MORE, { text_size: Math.round(((rv && (!isCur || peek) ? 20 : 15) * W) / 390) })
         const rtl = isRTL()
-        for (const [v, show] of [[rowCh[i].a, rtl], [rowCh[i].b, !rtl]]) {
-          if (on) v.bg.setProperty(hmUI.prop.COLOR, cc)
-          v.bg.setProperty(hmUI.prop.VISIBLE, on && show && page === 1)
-          v.inn.setProperty(hmUI.prop.VISIBLE, on && show && page === 1)
+        for (const [v, show] of [[rowSlot[i].a, rtl], [rowSlot[i].b, !rtl]]) {
+          if (chip) v.bg.setProperty(hmUI.prop.COLOR, cc)
+          v.bg.setProperty(hmUI.prop.VISIBLE, chip && show && page === 1)
+          v.inn.setProperty(hmUI.prop.VISIBLE, chip && show && page === 1)
         }
         if (rowTap[i]) rowTap[i].setProperty(hmUI.prop.VISIBLE, page === 1 && (!!rv || isCur))
       }
