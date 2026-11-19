@@ -8,7 +8,7 @@ import { getPrayerTimes, jdn } from './prayer'
 import { toHijri } from './hijri'
 import { REGIONS } from './regions'
 import { lang } from './lang/index'
-import { BUILD_VERSION, BUILD_TIME } from './build_info'
+import { BUILD_VERSION, BUILD_COMMIT, BUILD_TIME } from './build_info'
 
 // ===== إعدادات ثابتة =====
 const CFG = {
@@ -460,7 +460,7 @@ WatchFace({
     ui.done = B(2, 25, 336, 340, 62, 0x1f8a3d, 28, '', () => {
       settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
     })
-    ui.buildInfo = T(2, 0, 404, 390, 22, 14, C.dim, `v${BUILD_VERSION}  ·  ${BUILD_TIME}`)
+    ui.buildInfo = T(2, 0, 404, 390, 22, 14, C.dim, `v${BUILD_VERSION}  ·  ${BUILD_COMMIT}  ·  ${BUILD_TIME}`)
 
     applyLang()
     showPage(currentPage)

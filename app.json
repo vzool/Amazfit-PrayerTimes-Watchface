@@ -6,7 +6,7 @@
     "appType": "watchface",
     "version": {
       "code": 1,
-      "name": "0.14"
+      "name": "0.15"
     },
     "icon": "icon.png",
     "vender": "Abdelaziz Elrashed",
