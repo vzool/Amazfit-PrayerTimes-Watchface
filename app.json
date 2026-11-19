@@ -4,27 +4,43 @@
     "appId": 1135988,
     "appName": "أوقات الصلاة-Prayer Times",
     "appType": "watchface",
-    "version": { "code": 1, "name": "1.0.0" },
+    "version": {
+      "code": 1,
+      "name": "0.14"
+    },
     "icon": "icon.png",
     "vender": "Abdelaziz Elrashed",
     "description": "Watchface + prayer times"
   },
   "permissions": [
-      "data:os.device.info"
-    , "device:os.local_storage"
-    , "data:user.hd.heart_rate"
-    , "data:user.hd.step"
-    , "data:user.hd.calorie"
-    , "data:user.hd.distance"
-    , "data:user.hd.stand"
-    , "data:user.hd.pai"
-    , "data:user.hd.spo2"
-    , "data:user.hd.sleep"
+    "data:os.device.info",
+    "device:os.local_storage",
+    "data:user.hd.heart_rate",
+    "data:user.hd.step",
+    "data:user.hd.calorie",
+    "data:user.hd.distance",
+    "data:user.hd.stand",
+    "data:user.hd.pai",
+    "data:user.hd.spo2",
+    "data:user.hd.sleep"
   ],
-  "runtime": { "apiVersion": { "compatible": "3.0", "target": "3.0", "minVersion": "3.0" } },
+  "runtime": {
+    "apiVersion": {
+      "compatible": "3.0",
+      "target": "3.0",
+      "minVersion": "3.0"
+    }
+  },
   "targets": {
     "432x514-amazfit-bip-max": {
-      "module": { "watchface": { "path": "watchface/index", "main": 1, "editable": 0, "lockscreen": 1 } },
+      "module": {
+        "watchface": {
+          "path": "watchface/index",
+          "main": 1,
+          "editable": 0,
+          "lockscreen": 1
+        }
+      },
       "platforms": [
         {
           "name": "PikeW",
@@ -37,8 +53,12 @@
     }
   },
   "i18n": {
-    "ar-SD": { "appName": "أوقات الصلاة" },
-    "en-US": { "appName": "Prayer Times" }
+    "ar-SD": {
+      "appName": "أوقات الصلاة"
+    },
+    "en-US": {
+      "appName": "Prayer Times"
+    }
   },
   "defaultLanguage": "ar-SD"
 }

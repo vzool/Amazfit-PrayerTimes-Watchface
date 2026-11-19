@@ -8,6 +8,7 @@ import { getPrayerTimes, jdn } from './prayer'
 import { toHijri } from './hijri'
 import { REGIONS } from './regions'
 import { lang } from './lang/index'
+import { BUILD_VERSION, BUILD_TIME } from './build_info'
 
 // ===== إعدادات ثابتة =====
 const CFG = {
@@ -138,7 +139,7 @@ const dots = []      // نقاط خريطة السجل
 
 // ===== سجل أداء الصلوات =====
 // log.d[رقم اليوم] = [فجر, ظهر, عصر, مغرب, عشاء]؛ كل قيمة = مستوى*1000 + دقائق بعد الأذان (0 = غير مسجّلة).
-// المستوى (1 أخضر، 2 أصفر، 3 برتقالي، 4 أحمر) يُخزَّن لحظة التسجيل فلا يتغير لو عُدّلت الفواصل لاحقاً.
+// الدقائق المحفوظة (rv % 1000) ثابتة لا تتغير، بينما يُحسب المستوى واللون ديناميكياً من st.iq الحالية.
 let log = { s: 0, d: {} }   // s = أول يوم بدأ فيه التسجيل
 try { const l = JSON.parse(store.getItem('log')); if (l && l.d) log = l } catch (e) {}
 const logSave = () => { try { store.setItem('log', JSON.stringify(log)) } catch (e) {} }
@@ -147,6 +148,7 @@ let cs = { cur: -1, elapsed: 0, lvl: 0, todayKey: 0, nowSec: 0, rk: () => 0 }   
 const PRI = [0, 2, 3, 4, 5]              // فهارس الصلوات في مصفوفة المواقيت (بدون الشروق)
 const PNEXT = { 0: 1, 2: 3, 3: 4, 4: 5 } // الوقت الذي تنتهي عنده نافذة كل صلاة
 const LVC = [0, IQC.g, IQC.y, IQC.o, IQC.r]
+const calcLv = (mins, iv) => (iv > 0 ? (mins <= iv ? 1 : mins <= 2 * iv ? 2 : mins <= 3 * iv ? 3 : 4) : 1)
 const DOTC = { none: 0x1c1c1e, missed: 0x4a4a4f, pending: 0xa0a0a8 }   // لا بيانات/مستقبل، مضت بلا تسجيل، نافذتها مفتوحة
 
 const buzz = () => { try { const v = new SENSOR.Vibrator(); v.setMode(SENSOR.VIBRATOR_SCENE_SHORT_LIGHT); v.start() } catch (e) {} }
@@ -155,7 +157,8 @@ function markPrayer(i) {
   if (cs.cur !== i || !cs.lvl) return
   const key = cs.rk(i)
   const day = log.d[key] || (log.d[key] = [0, 0, 0, 0, 0])
-  day[IQ_OF[i]] = cs.lvl * 1000 + Math.min(999, Math.floor(cs.elapsed / 60))
+  const elapsedMin = Math.min(999, Math.floor(cs.elapsed / 60))
+  day[IQ_OF[i]] = cs.lvl * 1000 + elapsedMin
   pruneLog(cs.todayKey); logVer++; logSave(); buzz()
 }
 function undoPrayer(i) {
@@ -170,7 +173,7 @@ function dotColor(ago, p, nowSec, todayKey) {
   const key = todayKey - ago
   if (log.s && key < log.s) return DOTC.none
   const v = (log.d[key] || [])[p] || 0
-  if (v) return LVC[Math.floor(v / 1000)]
+  if (v) return LVC[calcLv(v % 1000, st.iq[p])]
   const i = PRI[p]
   if (ago === 0) {
     if (today[i] * 60 > nowSec) return DOTC.none
@@ -454,9 +457,10 @@ WatchFace({
     })
     ui.iqBack = B(3, 200, 322, 165, 46, 0x1f8a3d, 22, '', () => { showPage(2) })
 
-    ui.done = B(2, 25, 340, 340, 68, 0x1f8a3d, 28, '', () => {
+    ui.done = B(2, 25, 336, 340, 62, 0x1f8a3d, 28, '', () => {
       settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
     })
+    ui.buildInfo = T(2, 0, 404, 390, 22, 14, C.dim, `v${BUILD_VERSION}  ·  ${BUILD_TIME}`)
 
     applyLang()
     showPage(currentPage)
@@ -552,7 +556,7 @@ WatchFace({
       const todayKey = jdn(Y, M, D)
       if (!log.s) { log.s = todayKey; logSave() }
       const rk = i => (i === 5 && nowSec < today[0] * 60 ? todayKey - 1 : todayKey)   // عشاء ما بعد منتصف الليل يتبع أمس
-      const lvl = iv > 0 ? (() => { const m = elapsed / 60; return m <= iv ? 1 : m <= 2 * iv ? 2 : m <= 3 * iv ? 3 : 4 })() : 0
+      const lvl = iv > 0 ? calcLv(elapsed / 60, iv) : 0
       cs = { cur, elapsed, lvl, todayKey, nowSec, rk }
       if (!force && armLeft > 0 && --armLeft === 0) armRow = -1   // انتهت مهلة التأكيد
       if (!force && peekLeft > 0 && --peekLeft === 0) peekRow = -1   // عودة تلقائية إلى المؤقت
@@ -573,16 +577,18 @@ WatchFace({
         }
         // كبسولة واحدة: مؤقت أبيض / وقت التسجيل بلونه / "تأكيد؟"
         const timerTx = !st.rev ? fe(elapsed) + '+' : '+' + fe(elapsed)
-        const lv = rv ? Math.floor(rv / 1000) : 0
-        const recTx = rv ? fmt((key === todayKey ? today[i] : yesterday[i]) + (rv % 1000)) : ''
+        const mins = rv % 1000
+        const curIv = slot !== undefined ? st.iq[slot] : 0
+        const dynLv = rv ? calcLv(mins, curIv) : 0
+        const recTx = rv ? fmt((key === todayKey ? today[i] : yesterday[i]) + mins) : ''
         // لون العدّاد الحي يتدرج مع الوقت (col): أخضر ثم أصفر ثم برتقالي ثم أحمر.
         // ممتلئة بنص أسود = لم تُسجَّل بعد، مفرغة = مسجَّلة أو عرض وقت التسجيل.
         let on = false, hollow = true, oc = col, tc = col, tx = ''
-        if (rv && !isCur) { on = true; hollow = false; oc = LVC[lv]; tc = 0x000000; tx = recTx }   // صلاة سابقة: خلفية بلون التسجيل ونص أسود
+        if (rv && !isCur) { on = true; hollow = false; oc = LVC[dynLv]; tc = 0x000000; tx = recTx }   // صلاة سابقة: خلفية بلون التسجيل ونص أسود
         else if (rv) {                                                             // مسجَّلة ونافذتها مفتوحة
           on = true
-          if (peekRow === i && peekLeft > 0) { hollow = false; oc = LVC[lv]; tc = 0x000000; tx = recTx }   // لمسة: وقت التسجيل بالنمط نفسه
-          else tx = timerTx                                                        // العدّاد بلون وقته الحالي
+          if (peekRow === i && peekLeft > 0) { hollow = false; oc = LVC[dynLv]; tc = 0x000000; tx = recTx }   // لمسة: وقت التسجيل بالنمط نفسه
+          else { oc = LVC[dynLv]; tc = col; tx = timerTx }                         // الحدود بلون التسجيل، والعدّاد بلون وقته الحالي
         } else if (isCur) {                                                        // غير مسجَّلة
           on = true
           hollow = false; tc = 0x000000                                            // ممتلئة بلون الوقت الحالي ونص أسود
