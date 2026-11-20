@@ -15,18 +15,43 @@ try {
 }
 
 const baseVersion = (commits / 100).toFixed(2)
-
 // حساب عدد الملفات المتغيرة/غير المتتبعة في Git للدلالة على نسخة قيد التطوير
 let dirtyCount = 0
+let changedFiles = []
 try {
   const statusOut = execSync('git status --porcelain', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })
   const lines = statusOut.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
   dirtyCount = lines.length
+  changedFiles = lines.map(l => l.replace(/^[A-Z?\s]+/, '').trim())
 } catch (e) {
   dirtyCount = 0
+  changedFiles = []
 }
 
-const version = dirtyCount > 0 ? `${baseVersion}-dev${dirtyCount}` : baseVersion
+// التحقق مما إذا كان التغيير الوحيد (dirtyCount === 1) في app.json يقتصر على سطر "name": "...-dev..."
+let isOnlyDevNameInAppJson = false
+if (dirtyCount === 1 && changedFiles[0] === 'app.json' && fs.existsSync(appJsonFile)) {
+  try {
+    const diffOut = execSync('git diff -U0 app.json', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })
+    const added = diffOut.split(/\r?\n/).filter(l => l.startsWith('+') && !l.startsWith('+++'))
+    const removed = diffOut.split(/\r?\n/).filter(l => l.startsWith('-') && !l.startsWith('---'))
+    if (
+      added.length === 1 &&
+      removed.length === 1 &&
+      /"name"\s*:\s*"[^"]+-dev\d+"/.test(removed[0]) &&
+      /"name"\s*:\s*"[^"]+"/.test(added[0]) &&
+      !/-dev\d+/.test(added[0])
+    ) {
+      isOnlyDevNameInAppJson = true
+    }
+  } catch (e) {
+    isOnlyDevNameInAppJson = false
+  }
+}
+
+const effectiveDirtyCount = isOnlyDevNameInAppJson ? 0 : dirtyCount
+const version = effectiveDirtyCount > 0 ? `${baseVersion}-dev${effectiveDirtyCount}` : baseVersion
+
 
 let commitHash = 'unknown'
 try {
@@ -36,17 +61,21 @@ try {
   commitHash = 'unknown'
 }
 
-let buildTime = ''
+const pad = n => String(n).padStart(2, '0')
+const fmtDt = d => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+
+// تاريخ الحفظ (آخر commit في Git)
+let commitTime = ''
 try {
   const iso = execSync('git log -1 --format=%cI', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim()
   const d = iso ? new Date(iso) : new Date()
-  const pad = n => String(n).padStart(2, '0')
-  buildTime = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  commitTime = fmtDt(d)
 } catch (e) {
-  const d = new Date()
-  const pad = n => String(n).padStart(2, '0')
-  buildTime = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  commitTime = fmtDt(new Date())
 }
+
+// تاريخ البناء: لحظة تنفيذ أمر البناء الفعلية
+const buildTime = fmtDt(new Date())
 
 // تحديث app.version في app.json ليتطابق مع عدد commits ورقم الإصدار
 if (fs.existsSync(appJsonFile)) {
@@ -71,10 +100,11 @@ const content = `// ملف يُولَّد تلقائياً من Git عند كل 
 export const BUILD_VERSION = '${version}'
 export const BUILD_COMMIT = '${commitHash}'
 export const BUILD_TIME = '${buildTime}'
+export const COMMIT_TIME = '${commitTime}'
 export const COMMIT_COUNT = ${commits}
-export const DIRTY_COUNT = ${dirtyCount}
+export const DIRTY_COUNT = ${effectiveDirtyCount}
 `
 
 fs.mkdirSync(path.dirname(outFile), { recursive: true })
 fs.writeFileSync(outFile, content, 'utf8')
-console.log(`v${version} (dirty: ${dirtyCount}) · ${commitHash} · ${buildTime}`)
+console.log(`v${version} (dirty: ${effectiveDirtyCount}${isOnlyDevNameInAppJson ? ', release-name-only' : ''}) · ${commitHash} · build: ${buildTime} · commit: ${commitTime}`)

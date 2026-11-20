@@ -61,7 +61,7 @@ const arrowR = () => (st.rev ? '>' : '<')
 const stepL = () => (isRTL() ? 1 : -1) * (st.rev ? -1 : 1)
 const LEFT = hmUI.align.LEFT, RIGHT = hmUI.align.RIGHT
 
-const pages = [[], [], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات، 3: ضبط الإقامة
+const pages = [[], [], [], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات، 3: ضبط الإقامة، 4: شرح الواجهة
 const labels = []            // نصوص مرتبطة بمفتاح لغة: { wd, k }
 function T(p, x, y, w, h, size, color, text, align) {
   const key = text && typeof text === 'object' ? text.k : null   // text = { k: 'مفتاح' } يُترجم تلقائياً
@@ -129,6 +129,7 @@ const DT = (() => { try { return hmUI.data_type || {} } catch (e) { return {} } 
 
 let timer = null, ticks = 0, cacheKey = '', today = null, tomorrow = null, yesterday = null, settingsOpen = false
 let currentPage = st.page !== undefined ? st.page : 0
+let helpIdx = 0   // رقم شاشة الشرح الحالية
 let ui = {}, rowRects = [], rowTimes = [], rowNames = [], rowEl = [], rowElBg = [], iqNames = [], iqVals = []
 const rowPill = []   // لكل صلاة: كبسولة واحدة تجمع المؤقت الأبيض ووقت التسجيل { bg, inn, tx }
 const CH_HINT = 0x6e6e73   // لون إطار الكبسولة قبل التسجيل
@@ -231,6 +232,15 @@ function showPage(p) {
   }
 }
 
+// صفحة الشرح: عنوان + نص + عدّاد، ونصوصها في lang/ (helpTitles / helpBodies)
+function applyHelp() {
+  const ti = tr('helpTitles'), bo = tr('helpBodies')
+  ui.hTitle.setProperty(hmUI.prop.TEXT, ti[helpIdx])
+  ui.hBody.setProperty(hmUI.prop.MORE, { text: bo[helpIdx], align_h: isRTL() ? RIGHT : LEFT })
+  ui.hCount.setProperty(hmUI.prop.TEXT, (helpIdx + 1) + ' / ' + ti.length)
+  ui.hDone.setProperty(hmUI.prop.TEXT, tr('done'))
+}
+
 function applyLang() {
   labels.forEach(l => l.wd.setProperty(hmUI.prop.TEXT, tr(l.k)))
   const pr = tr('prayers')
@@ -243,7 +253,7 @@ function applyLang() {
   ui.iqReset.setProperty(hmUI.prop.TEXT, tr('reset'))
   ui.iqBack.setProperty(hmUI.prop.TEXT, tr('back'))
   ui.arrBtn.setProperty(hmUI.prop.TEXT, tr('arrows') + (st.rev ? tr('arrowsReversed') : tr('arrowsNormal')))
-  for (const [b, f] of [[ui.regL, arrowL], [ui.cityPrev, arrowL], [ui.regR, arrowR], [ui.cityNext, arrowR]]) b.setProperty(hmUI.prop.TEXT, f())
+  for (const [b, f] of [[ui.regL, arrowL], [ui.cityPrev, arrowL], [ui.regR, arrowR], [ui.cityNext, arrowR], [ui.hL, arrowL], [ui.hR, arrowR]]) b.setProperty(hmUI.prop.TEXT, f())
   ui.latMinus.setProperty(hmUI.prop.TEXT, tr('lat') + '-')
   ui.latPlus.setProperty(hmUI.prop.TEXT, tr('lat') + '+')
   ui.lonMinus.setProperty(hmUI.prop.TEXT, tr('lon') + '-')
@@ -327,16 +337,18 @@ WatchFace({
     // طبقة اللمس: الضغط المطول يفتح الإعدادات، النقر يبدل الصفحات
     ui.tap = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: 0, w: W, h: H, color: 0x000000, alpha: 0 })
     let longPressTimer = null
-    let setConfirmTimer = null, setConfirmBtn = null
+    let setConfirmTimer = null, setConfirmBtn = null, helpBtn = null
     // رسالة تأكيد فتح الإعدادات: تختفي تلقائياً بعد 3 ثوانٍ إن لم يتم التأكيد
     const hideSetConfirm = () => {
       if (setConfirmTimer) { stopTimer(setConfirmTimer); setConfirmTimer = null }
       if (setConfirmBtn) setConfirmBtn.setProperty(hmUI.prop.VISIBLE, false)
+      if (helpBtn) helpBtn.setProperty(hmUI.prop.VISIBLE, false)
     }
     const showSetConfirm = () => {
       if (!setConfirmBtn) return
       setConfirmBtn.setProperty(hmUI.prop.TEXT, tr('settingsConfirm') || tr('settings'))
       setConfirmBtn.setProperty(hmUI.prop.VISIBLE, true)
+      if (helpBtn) { helpBtn.setProperty(hmUI.prop.TEXT, tr('help')); helpBtn.setProperty(hmUI.prop.VISIBLE, true) }
       if (setConfirmTimer) stopTimer(setConfirmTimer)
       setConfirmTimer = createTimer(3000, 0, () => { setConfirmTimer = null; hideSetConfirm() })
     }
@@ -399,6 +411,15 @@ WatchFace({
       click_func: () => { hideSetConfirm(); settingsOpen = true; showPage(2) },
     })
     setConfirmBtn.setProperty(hmUI.prop.VISIBLE, false)
+
+    // زر الشرح: فوق زر «الإعدادات؟» مباشرة، ويظهر ويختفي معه (ضغط مطول ثم لمسه يفتح صفحة الشرح)
+    helpBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
+      x: sx(70), y: sy(95), w: sx(250), h: sy(80), radius: sx(40),
+      normal_color: 0x0a5fc4, press_color: 0x084a9a,
+      text: '', text_size: Math.round((34 * W) / 390), color: 0xffffff,
+      click_func: () => { hideSetConfirm(); settingsOpen = true; helpIdx = 0; showPage(4); applyHelp() },
+    })
+    helpBtn.setProperty(hmUI.prop.VISIBLE, false)
 
     // ---------- الصفحة 2: الإعدادات ----------
     // 1. زر اللغة
@@ -492,6 +513,21 @@ WatchFace({
       settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
     })
     ui.buildInfo = T(2, 0, 404, 390, 22, 14, C.dim, `v${BUILD_VERSION}  ·  ${BUILD_COMMIT}  ·  ${BUILD_TIME}`)
+
+    // ---------- الصفحة 4: شرح الواجهة ----------
+    ui.hTitle = T(4, 15, 10, 360, 44, 26, C.blue, '')
+    ui.hBody = hmUI.createWidget(hmUI.widget.TEXT, {
+      x: sx(22), y: sy(62), w: sx(346), h: sy(250), text_size: Math.round((22 * W) / 390), color: C.fg,
+      text: '', text_style: hmUI.text_style.WRAP, align_h: hmUI.align.RIGHT, align_v: hmUI.align.TOP,
+    })
+    pages[4].push(ui.hBody)
+    ui.hCount = T(4, 0, 318, 390, 26, 18, C.dim, '')
+    const helpGo = d => { const n = tr('helpTitles').length; helpIdx = (helpIdx + d + n) % n; applyHelp() }
+    ui.hL = B(4, 25, 352, 80, 56, 0x2a2a30, 26, arrowL(), () => helpGo(stepL()))      // نفس اتجاه أسهم الإعدادات
+    ui.hDone = B(4, 115, 352, 160, 56, 0x1f8a3d, 24, '', () => {
+      settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
+    })
+    ui.hR = B(4, 285, 352, 80, 56, 0x2a2a30, 26, arrowR(), () => helpGo(-stepL()))
 
     applyLang()
     showPage(currentPage)
