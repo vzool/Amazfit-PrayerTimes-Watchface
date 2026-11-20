@@ -36,4 +36,6 @@ export default {
   lon: 'Lon',
   iqTitle: 'الفاصل بين الأذان والإقامة (دقيقة)',
   confirm: 'تأكيد؟',
+  cancel: 'إلغاء؟',
+  settings: 'الإعدادات؟',
 }

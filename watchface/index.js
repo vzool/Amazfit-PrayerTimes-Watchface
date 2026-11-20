@@ -144,6 +144,8 @@ let log = { s: 0, d: {} }   // s = أول يوم بدأ فيه التسجيل
 try { const l = JSON.parse(store.getItem('log')); if (l && l.d) log = l } catch (e) {}
 const logSave = () => { try { store.setItem('log', JSON.stringify(log)) } catch (e) {} }
 let logVer = 0, dotsSig = '', armRow = -1, armLeft = 0, peekRow = -1, peekLeft = 0   // peek = عرض وقت التسجيل مؤقتاً
+let undoRow = -1, undoLeft = 0   // تأكيد إلغاء التسجيل: الضغط المطول الأول يعرض "إلغاء؟"، والثاني ينفّذ
+const undoTx = () => tr('undoConfirm') || tr('cancel')
 let cs = { cur: -1, elapsed: 0, lvl: 0, todayKey: 0, nowSec: 0, rk: () => 0 }   // حالة الصلاة الحالية (تُحدَّث كل ثانية)
 const PRI = [0, 2, 3, 4, 5]              // فهارس الصلوات في مصفوفة المواقيت (بدون الشروق)
 const PNEXT = { 0: 1, 2: 3, 3: 4, 4: 5 } // الوقت الذي تنتهي عنده نافذة كل صلاة
@@ -166,6 +168,7 @@ function undoPrayer(i) {
   if (!day || !day[IQ_OF[i]]) return
   day[IQ_OF[i]] = 0
   if (day.every(v => !v)) delete log.d[key]
+  undoRow = -1; undoLeft = 0
   logVer++; logSave(); buzz()
 }
 // لون خلية في الخريطة: ago = كم يوماً مضى، p = رقم الصلاة 0..4
@@ -324,14 +327,27 @@ WatchFace({
     // طبقة اللمس: الضغط المطول يفتح الإعدادات، النقر يبدل الصفحات
     ui.tap = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: 0, w: W, h: H, color: 0x000000, alpha: 0 })
     let longPressTimer = null
+    let setConfirmTimer = null, setConfirmBtn = null
+    // رسالة تأكيد فتح الإعدادات: تختفي تلقائياً بعد 3 ثوانٍ إن لم يتم التأكيد
+    const hideSetConfirm = () => {
+      if (setConfirmTimer) { stopTimer(setConfirmTimer); setConfirmTimer = null }
+      if (setConfirmBtn) setConfirmBtn.setProperty(hmUI.prop.VISIBLE, false)
+    }
+    const showSetConfirm = () => {
+      if (!setConfirmBtn) return
+      setConfirmBtn.setProperty(hmUI.prop.TEXT, tr('settingsConfirm') || tr('settings'))
+      setConfirmBtn.setProperty(hmUI.prop.VISIBLE, true)
+      if (setConfirmTimer) stopTimer(setConfirmTimer)
+      setConfirmTimer = createTimer(3000, 0, () => { setConfirmTimer = null; hideSetConfirm() })
+    }
 
     ui.tap.addEventListener(hmUI.event.CLICK_DOWN, () => {
       if (settingsOpen) return
+      hideSetConfirm()   // لمس أي مكان آخر يُخفي رسالة التأكيد
       if (longPressTimer) { stopTimer(longPressTimer); longPressTimer = null }
       longPressTimer = createTimer(700, 0, () => {
         longPressTimer = null
-        settingsOpen = true
-        showPage(2)
+        showSetConfirm()
       })
     })
 
@@ -351,6 +367,7 @@ WatchFace({
     // طبقات لمس صفوف الصلوات (تُنشأ بعد طبقة الصفحة لتكون فوقها): نقرتان للتسجيل، ضغط مطول للتراجع
     const hasRec = i => !!((log.d[cs.rk(i)] || [])[IQ_OF[i]])
     const rowShort = i => {
+      if (undoLeft > 0) { undoRow = -1; undoLeft = 0; this.tick(true); return }   // لمسة قصيرة أثناء "إلغاء؟" = تراجع عن الإلغاء
       if (cs.cur !== i || !cs.lvl) return   // الصفوف السابقة تعرض وقت التسجيل دائماً بلا تفاعل
       if (hasRec(i)) {   // مسجَّلة: لمسة تبدّل بين المؤقت ووقت التسجيل
         if (peekRow === i && peekLeft > 0) { peekLeft = 0; peekRow = -1 } else { peekRow = i; peekLeft = 5 }
@@ -359,7 +376,12 @@ WatchFace({
       } else { armRow = i; armLeft = 3 }   // اللمسة الأولى: "تأكيد؟"
       this.tick(true)
     }
-    const rowLong = i => { if (hasRec(i)) { undoPrayer(i); this.tick(true) } }
+    const rowLong = i => {
+      if (!hasRec(i)) return
+      if (undoRow === i && undoLeft > 0) { undoPrayer(i) }              // الضغطة المطولة الثانية: تنفيذ الإلغاء
+      else { undoRow = i; undoLeft = 3; armRow = -1; armLeft = 0; buzz() }   // الأولى: عرض "إلغاء؟"
+      this.tick(true)
+    }
     for (const i of PRI) {
       const lay = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: sx(14), y: sy(194 + i * 42), w: sx(362), h: sy(40), color: 0x000000, alpha: 0 })
       lay.setProperty(hmUI.prop.VISIBLE, false)
@@ -368,6 +390,15 @@ WatchFace({
       lay.addEventListener(hmUI.event.CLICK_UP, () => { if (lp) { stopTimer(lp); lp = null; rowShort(i) } })
       rowTap[i] = lay
     }
+
+    // زر تأكيد فتح الإعدادات (فوق كل طبقات اللمس)؛ النقر عليه يفتح صفحة الإعدادات
+    setConfirmBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
+      x: sx(70), y: sy(185), w: sx(250), h: sy(80), radius: sx(40),
+      normal_color: 0x1f8a3d, press_color: 0x166b2e,
+      text: '', text_size: Math.round((34 * W) / 390), color: 0xffffff,
+      click_func: () => { hideSetConfirm(); settingsOpen = true; showPage(2) },
+    })
+    setConfirmBtn.setProperty(hmUI.prop.VISIBLE, false)
 
     // ---------- الصفحة 2: الإعدادات ----------
     // 1. زر اللغة
@@ -560,6 +591,7 @@ WatchFace({
       cs = { cur, elapsed, lvl, todayKey, nowSec, rk }
       if (!force && armLeft > 0 && --armLeft === 0) armRow = -1   // انتهت مهلة التأكيد
       if (!force && peekLeft > 0 && --peekLeft === 0) peekRow = -1   // عودة تلقائية إلى المؤقت
+      if (!force && undoLeft > 0 && --undoLeft === 0) undoRow = -1   // انتهت مهلة تأكيد الإلغاء
       for (let i = 0; i < 6; i++) {
         const slot = IQ_OF[i]
         const key = slot !== undefined ? rk(i) : 0
@@ -594,6 +626,7 @@ WatchFace({
           hollow = false; tc = 0x000000                                            // ممتلئة بلون الوقت الحالي ونص أسود
           tx = armed ? tr('confirm') : timerTx                                      // وعند اللمسة الأولى يتبدل النص إلى "تأكيد؟" بنفس اللون
         }
+        if (rv && undoRow === i && undoLeft > 0) { on = true; hollow = false; oc = LVC[dynLv]; tc = 0x000000; tx = undoTx() }   // "إلغاء؟" بلون التسجيل نفسه
         const pl = rowPill[i]
         pl.tx.setProperty(hmUI.prop.TEXT, on ? tx : '')
         pl.tx.setProperty(hmUI.prop.COLOR, tc)

@@ -14,7 +14,19 @@ try {
   commits = 0
 }
 
-const version = (commits / 100).toFixed(2)
+const baseVersion = (commits / 100).toFixed(2)
+
+// حساب عدد الملفات المتغيرة/غير المتتبعة في Git للدلالة على نسخة قيد التطوير
+let dirtyCount = 0
+try {
+  const statusOut = execSync('git status --porcelain', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })
+  const lines = statusOut.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  dirtyCount = lines.length
+} catch (e) {
+  dirtyCount = 0
+}
+
+const version = dirtyCount > 0 ? `${baseVersion}-dev${dirtyCount}` : baseVersion
 
 let commitHash = 'unknown'
 try {
@@ -60,8 +72,9 @@ export const BUILD_VERSION = '${version}'
 export const BUILD_COMMIT = '${commitHash}'
 export const BUILD_TIME = '${buildTime}'
 export const COMMIT_COUNT = ${commits}
+export const DIRTY_COUNT = ${dirtyCount}
 `
 
 fs.mkdirSync(path.dirname(outFile), { recursive: true })
 fs.writeFileSync(outFile, content, 'utf8')
-console.log(`v${version} · ${commitHash} · ${buildTime}`)
+console.log(`v${version} (dirty: ${dirtyCount}) · ${commitHash} · ${buildTime}`)
