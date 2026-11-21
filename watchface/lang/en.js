@@ -43,12 +43,12 @@ export default {
   help: 'Guide?',
   helpTitles: ['Navigation', 'Data page', 'Prayer times', 'After-adhan counter', 'Logging prayers', 'Dots map', 'Settings'],
   helpBodies: [
-    'Tap once to switch between the data page and the prayer times page.\nPress and hold to show the "Guide?" and "Settings?" buttons; they hide after 3 seconds.',
+    'Tap once to switch between the data page and the prayer times page.\nPress and hold to show the Guide and Settings buttons. They hide after 3 seconds.',
     'Shows the time, Hijri date, heart rate, steps, calories, distance, stand, SPO2, PAI, sleep and battery. Values refresh every few seconds.',
     'The top shows the next prayer with the time left, and it is highlighted in the list. After sunrise a separate counter runs until Dhuhr.',
-    'After the adhan a counter appears next to the current prayer and changes color: green within the iqama interval, then yellow, orange and finally red. Set each interval in Settings > Iqama.',
-    'To log a prayer, tap its pill twice (the first tap shows "OK?"). Once logged, a tap toggles between the counter and the logged time. To undo, press and hold the pill, then press and hold again when "Cancel?" appears.',
+    'After the adhan a counter appears next to the current prayer and changes color: green within the iqama interval, then yellow, orange and finally red. Set each interval in Settings, then Iqama.',
+    'To log a prayer, tap its pill twice. The first tap asks you to confirm. Once logged, a tap toggles between the counter and the logged time. To undo, press and hold the pill, then press and hold again when it asks to cancel.',
     'The colored dots summarize your prayer log: seven days on each side of the clock, five dots per day for the five prayers. Each color reflects how long after the adhan it was logged.',
-    'Language, region and city (or a custom latitude and longitude), arrow direction, and the iqama interval for each prayer. Tap Done to exit.',
+    'Language, region and city or a custom latitude and longitude, arrow direction, and the iqama interval for each prayer. Tap Done to exit.',
   ],
 }

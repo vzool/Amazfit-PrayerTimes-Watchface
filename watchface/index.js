@@ -49,7 +49,12 @@ const pad = n => (n < 10 ? '0' : '') + n
 const fmt = m => { m = ((m % 1440) + 1440) % 1440; return pad(Math.floor(m / 60)) + ':' + pad(m % 60) }
 // ===== اللغة: كل النصوص في lang/ (ملف لكل لغة)، واتجاه الكتابة rtl داخل كل لغة =====
 const L = () => lang[st.lang] || lang.en
-const tr = k => { const v = L()[k]; return v !== undefined ? v : lang.en[k] }   // أي مفتاح ناقص يرجع للإنجليزية
+const tr = k => {
+  let v = L()[k]; if (v === undefined) v = lang.en[k]   // أي مفتاح ناقص يرجع للإنجليزية
+  // النظام يرسم كل النصوص باتجاه RTL، فعلامة ؟ في آخر نص إنجليزي تظهر في أوله: نقلبها مسبقاً
+  if (typeof v === 'string' && !isRTL() && v.endsWith('?')) v = '?' + v.slice(0, -1)
+  return v
+}
 const isRTL = () => L().rtl === true
 const nm = o => o[st.lang] || o.en || o.ar          // اسم مترجم داخل regions.js (مع رجوع للإنجليزية)
 const LANGS = Object.keys(lang)                     // ترتيب التبديل بزر اللغة
@@ -233,11 +238,29 @@ function showPage(p) {
 }
 
 // صفحة الشرح: عنوان + نص + عدّاد، ونصوصها في lang/ (helpTitles / helpBodies)
+// الودجت لا يلتفّ تلقائياً (يقتطع كل سطر بنقاط)، فنقسّم النص إلى أسطر بأنفسنا
+const HELP_COLS = 30
+function wrapText(str, max) {
+  const out = []
+  for (const para of str.split('\n')) {
+    let line = ''
+    for (const w of para.split(' ')) {
+      if (line && (line + ' ' + w).length > max) { out.push(line); line = w } else line = line ? line + ' ' + w : w
+    }
+    out.push(line)
+  }
+  return out
+}
+// النظام يرسم باتجاه RTL: في لغة LTR تنتقل علامات الترقيم على طرفي السطر إلى الطرف الآخر، فنبدّلها مسبقاً
+const edgeFix = l => { const m = l.match(/^([\s?!.,:;]*)(.*?)([\s?!.,:;]*)$/); return m[3] + m[2] + m[1] }
 function applyHelp() {
   const ti = tr('helpTitles'), bo = tr('helpBodies')
+  let lines = wrapText(bo[helpIdx], HELP_COLS)
+  if (!isRTL()) lines = lines.map(edgeFix)
   ui.hTitle.setProperty(hmUI.prop.TEXT, ti[helpIdx])
-  ui.hBody.setProperty(hmUI.prop.MORE, { text: bo[helpIdx], align_h: isRTL() ? RIGHT : LEFT })
-  ui.hCount.setProperty(hmUI.prop.TEXT, (helpIdx + 1) + ' / ' + ti.length)
+  ui.hBody.setProperty(hmUI.prop.MORE, { text: lines.join('\n'), align_h: isRTL() ? RIGHT : LEFT })
+  // العدّاد يُكتب معكوساً لأن الأرقام تُرتَّب أيضاً باتجاه RTL: يظهر «1 / 7»
+  ui.hCount.setProperty(hmUI.prop.TEXT, ti.length + ' / ' + (helpIdx + 1))
   ui.hDone.setProperty(hmUI.prop.TEXT, tr('done'))
 }
 
@@ -517,8 +540,8 @@ WatchFace({
     // ---------- الصفحة 4: شرح الواجهة ----------
     ui.hTitle = T(4, 15, 10, 360, 44, 26, C.blue, '')
     ui.hBody = hmUI.createWidget(hmUI.widget.TEXT, {
-      x: sx(22), y: sy(62), w: sx(346), h: sy(250), text_size: Math.round((22 * W) / 390), color: C.fg,
-      text: '', text_style: hmUI.text_style.WRAP, align_h: hmUI.align.RIGHT, align_v: hmUI.align.TOP,
+      x: sx(22), y: sy(56), w: sx(346), h: sy(258), text_size: Math.round((20 * W) / 390), color: C.fg,
+      text: '', align_h: hmUI.align.RIGHT, align_v: hmUI.align.TOP,
     })
     pages[4].push(ui.hBody)
     ui.hCount = T(4, 0, 318, 390, 26, 18, C.dim, '')
