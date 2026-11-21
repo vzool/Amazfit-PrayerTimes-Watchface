@@ -68,6 +68,7 @@ const LEFT = hmUI.align.LEFT, RIGHT = hmUI.align.RIGHT
 
 const DIM_ALPHA = 190      // شفافية الطبقة السوداء فوق الواجهة عند ظهور زرّي الشرح والإعدادات (0 شفاف .. 255 معتم)
 const SUPPORT_URL = 'https://ko-fi.com/vzool'   // رابط دعم المطور (يطابقه رمز QR)
+const ICO_X_RTL = 310, ICO_X_LTR = 46   // موضع أيقونة زر القائمة (وحدات التصميم) في العربية / الإنجليزية
 const SUPPORT_EMAIL = 'support@virtualzool.com'   // بريد الدعم الفني: الإبلاغ عن مشكلة أو طلب ميزة
 // مصفوفة رمز QR لنفس الرابط أعلاه (25×25، تصحيح أخطاء M): '1' = وحدة سوداء. تُرسم بمستطيلات نقية بدل صورة
 // (الصور تتحول عند البناء إلى ألوان 16 بت فيصير الأبيض رمادياً مخضراً ويضعف المسح). عند تغيير الرابط يلزم توليد مصفوفة جديدة.
@@ -415,6 +416,7 @@ WatchFace({
     ui.tap = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: 0, w: W, h: H, color: 0x000000, alpha: 0 })
     let longPressTimer = null
     let setConfirmTimer = null, setConfirmBtn = null, helpBtn = null, aboutBtn = null, backBtn = null, menuDim = null
+    const menuIcons = []   // أجزاء أيقونات الأزرار { wd, dx }: تظهر وتختفي مع القائمة وتتبع اتجاه اللغة
     // رسالة تأكيد فتح الإعدادات: تختفي تلقائياً بعد 3 ثوانٍ إن لم يتم التأكيد
     const hideSetConfirm = () => {
       if (setConfirmTimer) { stopTimer(setConfirmTimer); setConfirmTimer = null }
@@ -423,6 +425,7 @@ WatchFace({
       if (aboutBtn) aboutBtn.setProperty(hmUI.prop.VISIBLE, false)
       if (backBtn) backBtn.setProperty(hmUI.prop.VISIBLE, false)
       if (menuDim) menuDim.setProperty(hmUI.prop.VISIBLE, false)
+      for (const i of menuIcons) i.wd.setProperty(hmUI.prop.VISIBLE, false)
     }
     const showSetConfirm = () => {
       if (!setConfirmBtn) return
@@ -430,6 +433,8 @@ WatchFace({
       setConfirmBtn.setProperty(hmUI.prop.VISIBLE, true)
       if (helpBtn) { helpBtn.setProperty(hmUI.prop.TEXT, tr('help')); helpBtn.setProperty(hmUI.prop.VISIBLE, true) }
       if (menuDim) menuDim.setProperty(hmUI.prop.VISIBLE, true)
+      const icoX = isRTL() ? ICO_X_RTL : ICO_X_LTR   // الأيقونة في بداية الزر: يمين في العربية ويسار في الإنجليزية
+      for (const i of menuIcons) { i.wd.setProperty(hmUI.prop.X, sx(icoX + i.dx)); i.wd.setProperty(hmUI.prop.VISIBLE, true) }
       if (aboutBtn) { aboutBtn.setProperty(hmUI.prop.TEXT, tr('about')); aboutBtn.setProperty(hmUI.prop.VISIBLE, true) }
       if (backBtn) { backBtn.setProperty(hmUI.prop.TEXT, tr('back')); backBtn.setProperty(hmUI.prop.VISIBLE, true) }
       if (setConfirmTimer) stopTimer(setConfirmTimer)
@@ -493,41 +498,75 @@ WatchFace({
     menuDim.addEventListener(hmUI.event.CLICK_UP, () => {})
     menuDim.setProperty(hmUI.prop.VISIBLE, false)
 
+    // ما يفعله كل زر في القائمة (يُستخدم للزر ولأجزاء أيقونته معاً حتى تعمل اللمسة على الأيقونة أيضاً)
+    const openSettings = () => { hideSetConfirm(); settingsOpen = true; showPage(2) }
+    const openHelp = () => { hideSetConfirm(); settingsOpen = true; helpIdx = 0; showPage(4); applyHelp() }
+    const openAbout = () => { hideSetConfirm(); settingsOpen = true; showPage(5) }
+
     // زر تأكيد فتح الإعدادات (فوق كل طبقات اللمس)؛ النقر عليه يفتح صفحة الإعدادات
     setConfirmBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: sx(70), y: sy(151), w: sx(250), h: sy(70), radius: sx(35),
+      x: sx(30), y: sy(151), w: sx(330), h: sy(70), radius: sx(35),
       normal_color: 0x1f8a3d, press_color: 0x166b2e,
-      text: '', text_size: Math.round((30 * W) / 390), color: 0xffffff,
-      click_func: () => { hideSetConfirm(); settingsOpen = true; showPage(2) },
+      text: '', text_size: Math.round((28 * W) / 390), color: 0xffffff,
+      click_func: openSettings,
     })
     setConfirmBtn.setProperty(hmUI.prop.VISIBLE, false)
 
     // زر الشرح: فوق زر «الإعدادات؟» مباشرة، ويظهر ويختفي معه (ضغط مطول ثم لمسه يفتح صفحة الشرح)
     helpBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: sx(70), y: sy(73), w: sx(250), h: sy(70), radius: sx(35),
+      x: sx(30), y: sy(73), w: sx(330), h: sy(70), radius: sx(35),
       normal_color: 0x0a5fc4, press_color: 0x084a9a,
-      text: '', text_size: Math.round((30 * W) / 390), color: 0xffffff,
-      click_func: () => { hideSetConfirm(); settingsOpen = true; helpIdx = 0; showPage(4); applyHelp() },
+      text: '', text_size: Math.round((28 * W) / 390), color: 0xffffff,
+      click_func: openHelp,
     })
     helpBtn.setProperty(hmUI.prop.VISIBLE, false)
 
     // زر «حول المطور»: تحت زر «الإعدادات؟» مباشرة وفوق زر الرجوع، يفتح صفحة حول المطور (5)
     aboutBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: sx(70), y: sy(229), w: sx(250), h: sy(70), radius: sx(35),
+      x: sx(30), y: sy(229), w: sx(330), h: sy(70), radius: sx(35),
       normal_color: 0x7a4bd0, press_color: 0x5f38a8,
-      text: '', text_size: Math.round((30 * W) / 390), color: 0xffffff,
-      click_func: () => { hideSetConfirm(); settingsOpen = true; showPage(5) },
+      text: '', text_size: Math.round((28 * W) / 390), color: 0xffffff,
+      click_func: openAbout,
     })
     aboutBtn.setProperty(hmUI.prop.VISIBLE, false)
 
     // زر الرجوع: تحت زر «حول المطور» (آخر القائمة)، يغلق القائمة ويعيد الواجهة كما كانت
     backBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: sx(70), y: sy(307), w: sx(250), h: sy(70), radius: sx(35),
+      x: sx(30), y: sy(307), w: sx(330), h: sy(70), radius: sx(35),
       normal_color: 0x3a3a40, press_color: 0x56565c,
-      text: '', text_size: Math.round((30 * W) / 390), color: 0xffffff,
+      text: '', text_size: Math.round((28 * W) / 390), color: 0xffffff,
       click_func: () => { hideSetConfirm() },
     })
     backBtn.setProperty(hmUI.prop.VISIBLE, false)
+
+    // أيقونات الأزرار من أشكال بسيطة (بلا صور: لا تتغير ألوانها عند البناء ولا نعتمد على رموز الخط)
+    // ico: قطعة أيقونة مقاسها بوحدات التصميم نسبة لزاوية الأيقونة العليا (dx, dy)؛ تتبع إلى oy الارتفاع الأعلى للأيقونة
+    const ico = (oy, dx, dy, w, h, r, color, fn) => {
+      const wd = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: sy(oy) + sx(dy), w: sx(w), h: sx(h), radius: sx(r), color })
+      wd.addEventListener(hmUI.event.CLICK_UP, fn)
+      wd.setProperty(hmUI.prop.VISIBLE, false)
+      menuIcons.push({ wd, dx })
+    }
+    // الشرح: دائرة بيضاء فيها علامة استفهام بلون الزر
+    ico(91, 0, 0, 34, 34, 17, 0xffffff, openHelp)
+    {
+      const q = hmUI.createWidget(hmUI.widget.TEXT, {
+        x: 0, y: sy(91), w: sx(34), h: sx(34), text_size: Math.round((26 * W) / 390), color: 0x0a5fc4,
+        text: '?', align_h: hmUI.align.CENTER_H, align_v: hmUI.align.CENTER_V,
+      })
+      q.addEventListener(hmUI.event.CLICK_UP, openHelp)
+      q.setProperty(hmUI.prop.VISIBLE, false)
+      menuIcons.push({ wd: q, dx: 0 })
+    }
+    // الإعدادات: ثلاثة منزلقات (خط + مقبض حلقي بفتحة بلون الزر)
+    for (const [ly, kx] of [[4, 5], [15, 20], [26, 9]]) {
+      ico(169, 0, ly, 34, 4, 2, 0xffffff, openSettings)
+      ico(169, kx, ly - 5, 14, 14, 7, 0xffffff, openSettings)
+      ico(169, kx + 3, ly - 2, 8, 8, 4, 0x1f8a3d, openSettings)
+    }
+    // حول المطور: شخص (رأس وجسم)
+    ico(247, 10, 0, 14, 14, 7, 0xffffff, openAbout)
+    ico(247, 3, 19, 28, 15, 7, 0xffffff, openAbout)
 
     // ---------- الصفحة 2: الإعدادات ----------
     // 1. زر اللغة
