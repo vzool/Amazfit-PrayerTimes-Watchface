@@ -795,7 +795,9 @@ WatchFace({
         ui.nxBg.setProperty(hmUI.prop.COLOR, urgent ? NX_BG_URGENT : NX_BG)
         ui.nxFill.setProperty(hmUI.prop.COLOR, nxCol)
         const fw = Math.max(4, Math.round(318 * frac))   // يمتلئ الشريط من جهة البداية (يمين في العربية، يسار في الإنجليزية)
-        ui.nxFill.setProperty(hmUI.prop.MORE, { x: sx(isRTL() ? 36 + 318 - fw : 36), w: sx(fw) })
+        // المستطيل لا يتجاوب مع MORE (يعمل مع النصوص فقط): نضبط العرض والموضع بخاصيتين مستقلتين
+        ui.nxFill.setProperty(hmUI.prop.W, sx(fw))
+        ui.nxFill.setProperty(hmUI.prop.X, sx(isRTL() ? 36 + 318 - fw : 36))
       }
       // الصلاة الحالية (بين الأذان وما بعده): آخر صلاة دخل وقتها. الفجر ينتهي بالشروق، والعشاء بعد منتصف الليل تُحسب من أمس.
       let cur = -1, elapsed = 0
