@@ -40,6 +40,12 @@ export default {
   cancel: 'Cancel?',
   settings: 'Settings?',
 
+  // About the developer
+  about: 'About Developer',
+  aboutTitle: 'Support the Developer',
+  aboutSub: 'Scan to support this free app',
+  aboutSupport: 'Report a problem or request a feature',
+
   // Interface guide (the "Guide?" button sits right above "Settings?")
   help: 'Guide?',
   helpTitles: ['Navigation', 'Data page', 'Prayer times', 'After-adhan counter', 'Logging prayers', 'Dots map', 'Settings'],

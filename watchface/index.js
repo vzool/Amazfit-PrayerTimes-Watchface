@@ -67,8 +67,59 @@ const stepL = () => (isRTL() ? 1 : -1) * (st.rev ? -1 : 1)
 const LEFT = hmUI.align.LEFT, RIGHT = hmUI.align.RIGHT
 
 const DIM_ALPHA = 190      // شفافية الطبقة السوداء فوق الواجهة عند ظهور زرّي الشرح والإعدادات (0 شفاف .. 255 معتم)
+const SUPPORT_URL = 'https://ko-fi.com/vzool'   // رابط دعم المطور (يطابقه رمز QR)
+const SUPPORT_EMAIL = 'support@virtualzool.com'   // بريد الدعم الفني: الإبلاغ عن مشكلة أو طلب ميزة
+// مصفوفة رمز QR لنفس الرابط أعلاه (25×25، تصحيح أخطاء M): '1' = وحدة سوداء. تُرسم بمستطيلات نقية بدل صورة
+// (الصور تتحول عند البناء إلى ألوان 16 بت فيصير الأبيض رمادياً مخضراً ويضعف المسح). عند تغيير الرابط يلزم توليد مصفوفة جديدة.
+const QR_ROWS = [
+  '1111111011000010101111111',
+  '1000001001101110101000001',
+  '1011101011111101001011101',
+  '1011101001111111001011101',
+  '1011101001001100001011101',
+  '1000001011010110101000001',
+  '1111111010101010101111111',
+  '0000000001000001100000000',
+  '1010001100111000100100101',
+  '0110100101000111101101011',
+  '1100011111001011000001101',
+  '1101110001000001011011000',
+  '1100101000010001111100001',
+  '0111010000000101101100011',
+  '1100101110110001100001101',
+  '0010100010000011110111000',
+  '1101111100111000111110010',
+  '0000000010101100100010001',
+  '1111111010101000101010001',
+  '1000001001111010100010011',
+  '1011101000001001111110001',
+  '1011101001100101010010110',
+  '1011101010011101010111011',
+  '1000001001100000110110000',
+  '1111111010111110110001001',
+]
+// دمج الوحدات السوداء المتجاورة في مستطيلات: أولاً أشواط أفقية، ثم دمج الأشواط المتطابقة في الصفوف المتتالية رأسياً
+function qrRects(rows) {
+  const out = [], active = {}
+  for (let r = 0; r <= rows.length; r++) {
+    const cur = {}
+    if (r < rows.length) {
+      const row = rows[r]
+      for (let c = 0; c < row.length;) {
+        if (row[c] !== '1') { c++; continue }
+        let e = c
+        while (e < row.length && row[e] === '1') e++
+        cur[c + ':' + (e - c)] = [c, e - c]
+        c = e
+      }
+    }
+    for (const k of Object.keys(active)) if (!cur[k]) { const a = active[k]; out.push([a.c, a.r0, a.len, a.h]); delete active[k] }
+    for (const k of Object.keys(cur)) { if (active[k]) active[k].h++; else active[k] = { c: cur[k][0], len: cur[k][1], r0: r, h: 1 } }
+  }
+  return out
+}
 const MENU_HIDE_MS = 3000  // اختفاء القائمة تلقائياً إن لم يُلمس شيء (0 = تبقى حتى يُضغط «رجوع»)
-const pages = [[], [], [], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات، 3: ضبط الإقامة، 4: شرح الواجهة
+const pages = [[], [], [], [], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات، 3: ضبط الإقامة، 4: شرح الواجهة، 5: حول المطور
 const labels = []            // نصوص مرتبطة بمفتاح لغة: { wd, k }
 function T(p, x, y, w, h, size, color, text, align) {
   const key = text && typeof text === 'object' ? text.k : null   // text = { k: 'مفتاح' } يُترجم تلقائياً
@@ -277,6 +328,7 @@ function applyLang() {
   ui.iqBtn.setProperty(hmUI.prop.TEXT, tr('iqama'))
   ui.iqReset.setProperty(hmUI.prop.TEXT, tr('reset'))
   ui.iqBack.setProperty(hmUI.prop.TEXT, tr('back'))
+  ui.aboutBack.setProperty(hmUI.prop.TEXT, tr('back'))
   ui.arrBtn.setProperty(hmUI.prop.TEXT, tr('arrows') + (st.rev ? tr('arrowsReversed') : tr('arrowsNormal')))
   for (const [b, f] of [[ui.regL, arrowL], [ui.cityPrev, arrowL], [ui.regR, arrowR], [ui.cityNext, arrowR], [ui.hL, arrowL], [ui.hR, arrowR]]) b.setProperty(hmUI.prop.TEXT, f())
   ui.latMinus.setProperty(hmUI.prop.TEXT, tr('lat') + '-')
@@ -362,12 +414,13 @@ WatchFace({
     // طبقة اللمس: الضغط المطول يفتح الإعدادات، النقر يبدل الصفحات
     ui.tap = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: 0, w: W, h: H, color: 0x000000, alpha: 0 })
     let longPressTimer = null
-    let setConfirmTimer = null, setConfirmBtn = null, helpBtn = null, backBtn = null, menuDim = null
+    let setConfirmTimer = null, setConfirmBtn = null, helpBtn = null, aboutBtn = null, backBtn = null, menuDim = null
     // رسالة تأكيد فتح الإعدادات: تختفي تلقائياً بعد 3 ثوانٍ إن لم يتم التأكيد
     const hideSetConfirm = () => {
       if (setConfirmTimer) { stopTimer(setConfirmTimer); setConfirmTimer = null }
       if (setConfirmBtn) setConfirmBtn.setProperty(hmUI.prop.VISIBLE, false)
       if (helpBtn) helpBtn.setProperty(hmUI.prop.VISIBLE, false)
+      if (aboutBtn) aboutBtn.setProperty(hmUI.prop.VISIBLE, false)
       if (backBtn) backBtn.setProperty(hmUI.prop.VISIBLE, false)
       if (menuDim) menuDim.setProperty(hmUI.prop.VISIBLE, false)
     }
@@ -377,6 +430,7 @@ WatchFace({
       setConfirmBtn.setProperty(hmUI.prop.VISIBLE, true)
       if (helpBtn) { helpBtn.setProperty(hmUI.prop.TEXT, tr('help')); helpBtn.setProperty(hmUI.prop.VISIBLE, true) }
       if (menuDim) menuDim.setProperty(hmUI.prop.VISIBLE, true)
+      if (aboutBtn) { aboutBtn.setProperty(hmUI.prop.TEXT, tr('about')); aboutBtn.setProperty(hmUI.prop.VISIBLE, true) }
       if (backBtn) { backBtn.setProperty(hmUI.prop.TEXT, tr('back')); backBtn.setProperty(hmUI.prop.VISIBLE, true) }
       if (setConfirmTimer) stopTimer(setConfirmTimer)
       if (MENU_HIDE_MS > 0) setConfirmTimer = createTimer(MENU_HIDE_MS, 0, () => { setConfirmTimer = null; hideSetConfirm() })
@@ -441,27 +495,36 @@ WatchFace({
 
     // زر تأكيد فتح الإعدادات (فوق كل طبقات اللمس)؛ النقر عليه يفتح صفحة الإعدادات
     setConfirmBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: sx(70), y: sy(185), w: sx(250), h: sy(80), radius: sx(40),
+      x: sx(70), y: sy(151), w: sx(250), h: sy(70), radius: sx(35),
       normal_color: 0x1f8a3d, press_color: 0x166b2e,
-      text: '', text_size: Math.round((34 * W) / 390), color: 0xffffff,
+      text: '', text_size: Math.round((30 * W) / 390), color: 0xffffff,
       click_func: () => { hideSetConfirm(); settingsOpen = true; showPage(2) },
     })
     setConfirmBtn.setProperty(hmUI.prop.VISIBLE, false)
 
     // زر الشرح: فوق زر «الإعدادات؟» مباشرة، ويظهر ويختفي معه (ضغط مطول ثم لمسه يفتح صفحة الشرح)
     helpBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: sx(70), y: sy(95), w: sx(250), h: sy(80), radius: sx(40),
+      x: sx(70), y: sy(73), w: sx(250), h: sy(70), radius: sx(35),
       normal_color: 0x0a5fc4, press_color: 0x084a9a,
-      text: '', text_size: Math.round((34 * W) / 390), color: 0xffffff,
+      text: '', text_size: Math.round((30 * W) / 390), color: 0xffffff,
       click_func: () => { hideSetConfirm(); settingsOpen = true; helpIdx = 0; showPage(4); applyHelp() },
     })
     helpBtn.setProperty(hmUI.prop.VISIBLE, false)
 
-    // زر الرجوع: تحت زر «الإعدادات؟» (آخر القائمة)، يغلق القائمة ويعيد الواجهة كما كانت
+    // زر «حول المطور»: تحت زر «الإعدادات؟» مباشرة وفوق زر الرجوع، يفتح صفحة حول المطور (5)
+    aboutBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
+      x: sx(70), y: sy(229), w: sx(250), h: sy(70), radius: sx(35),
+      normal_color: 0x7a4bd0, press_color: 0x5f38a8,
+      text: '', text_size: Math.round((30 * W) / 390), color: 0xffffff,
+      click_func: () => { hideSetConfirm(); settingsOpen = true; showPage(5) },
+    })
+    aboutBtn.setProperty(hmUI.prop.VISIBLE, false)
+
+    // زر الرجوع: تحت زر «حول المطور» (آخر القائمة)، يغلق القائمة ويعيد الواجهة كما كانت
     backBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: sx(70), y: sy(275), w: sx(250), h: sy(80), radius: sx(40),
+      x: sx(70), y: sy(307), w: sx(250), h: sy(70), radius: sx(35),
       normal_color: 0x3a3a40, press_color: 0x56565c,
-      text: '', text_size: Math.round((34 * W) / 390), color: 0xffffff,
+      text: '', text_size: Math.round((30 * W) / 390), color: 0xffffff,
       click_func: () => { hideSetConfirm() },
     })
     backBtn.setProperty(hmUI.prop.VISIBLE, false)
@@ -573,6 +636,26 @@ WatchFace({
       settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
     })
     ui.hR = B(4, 285, 352, 80, 56, 0x2a2a30, 26, arrowR(), () => helpGo(-stepL()))
+
+    // ---------- الصفحة 5: حول المطور ----------
+    T(5, 0, 10, 390, 34, 26, C.green, { k: 'aboutTitle' })
+    T(5, 10, 46, 370, 24, 17, 0xc8c8d0, { k: 'aboutSub' })
+    // رمز QR لرابط الدعم: وحدة = 7 بكسل صحيحة (بلا تكبير فيبقى حاداً) + هامش أبيض بوحدة واحدة فقط حول الرمز
+    // (المواصفة تنصح بأربع وحدات؛ إن صعب المسح على هاتفك اجعل Q = 2)
+    {
+      const M = 7, Q = 1, size = (QR_ROWS.length + 2 * Q) * M
+      const qx = Math.round((W - size) / 2), qy = sy(76)
+      pages[5].push(hmUI.createWidget(hmUI.widget.FILL_RECT, { x: qx, y: qy, w: size, h: size, color: 0xffffff }))
+      for (const [c, r0, w, h] of qrRects(QR_ROWS)) {
+        pages[5].push(hmUI.createWidget(hmUI.widget.FILL_RECT, { x: qx + (Q + c) * M, y: qy + (Q + r0) * M, w: w * M, h: h * M, color: 0x000000 }))
+      }
+    }
+    T(5, 0, 248, 390, 28, 20, C.green, SUPPORT_URL.replace('https://', ''))
+    T(5, 10, 282, 370, 24, 17, 0xc8c8d0, { k: 'aboutSupport' })
+    T(5, 0, 308, 390, 28, 20, C.green, SUPPORT_EMAIL)
+    ui.aboutBack = B(5, 90, 376, 210, 56, 0x2a2a30, 26, '', () => {
+      settingsOpen = false; ticks = 0; showPage(currentPage); this.tick(true)
+    })
 
     applyLang()
     showPage(currentPage)
