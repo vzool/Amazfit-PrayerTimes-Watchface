@@ -622,7 +622,9 @@ WatchFace({
     if (page === 0 || force) {
       ui.hh.setProperty(hmUI.prop.TEXT, pad(h))
       ui.mm.setProperty(hmUI.prop.TEXT, pad(mi))
-      ui.hdate.setProperty(hmUI.prop.TEXT, hj.day + ' ' + hmonth)
+      // «الشهر الميلادي/الشهر الهجري» مثل نوفمبر/جمادى الآخرة؛ يصغر الخط تدريجياً للأسماء الطويلة كي يتسع في العرض المتاح
+      const dtxt = tr('gregMonths')[M - 1] + '/' + hmonth
+      ui.hdate.setProperty(hmUI.prop.MORE, { text: dtxt, text_size: Math.round((Math.max(14, Math.min(22, Math.floor(190 / (dtxt.length * 0.5)))) * W) / 390) })
       if (ticks % 5 === 1 || force) {
         ui.hr.setProperty(hmUI.prop.TEXT, '' + safe(() => s.hr.getLast(), '--'))
         const b = safe(() => s.bat.getCurrent(), 0)
