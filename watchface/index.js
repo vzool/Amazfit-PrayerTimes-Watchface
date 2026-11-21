@@ -66,6 +66,8 @@ const arrowR = () => (st.rev ? '>' : '<')
 const stepL = () => (isRTL() ? 1 : -1) * (st.rev ? -1 : 1)
 const LEFT = hmUI.align.LEFT, RIGHT = hmUI.align.RIGHT
 
+const DIM_ALPHA = 190      // شفافية الطبقة السوداء فوق الواجهة عند ظهور زرّي الشرح والإعدادات (0 شفاف .. 255 معتم)
+const MENU_HIDE_MS = 3000  // اختفاء القائمة تلقائياً إن لم يُلمس شيء (0 = تبقى حتى يُضغط «رجوع»)
 const pages = [[], [], [], [], []]   // 0: بيانات، 1: مواقيت، 2: إعدادات، 3: ضبط الإقامة، 4: شرح الواجهة
 const labels = []            // نصوص مرتبطة بمفتاح لغة: { wd, k }
 function T(p, x, y, w, h, size, color, text, align) {
@@ -360,20 +362,24 @@ WatchFace({
     // طبقة اللمس: الضغط المطول يفتح الإعدادات، النقر يبدل الصفحات
     ui.tap = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: 0, w: W, h: H, color: 0x000000, alpha: 0 })
     let longPressTimer = null
-    let setConfirmTimer = null, setConfirmBtn = null, helpBtn = null
+    let setConfirmTimer = null, setConfirmBtn = null, helpBtn = null, backBtn = null, menuDim = null
     // رسالة تأكيد فتح الإعدادات: تختفي تلقائياً بعد 3 ثوانٍ إن لم يتم التأكيد
     const hideSetConfirm = () => {
       if (setConfirmTimer) { stopTimer(setConfirmTimer); setConfirmTimer = null }
       if (setConfirmBtn) setConfirmBtn.setProperty(hmUI.prop.VISIBLE, false)
       if (helpBtn) helpBtn.setProperty(hmUI.prop.VISIBLE, false)
+      if (backBtn) backBtn.setProperty(hmUI.prop.VISIBLE, false)
+      if (menuDim) menuDim.setProperty(hmUI.prop.VISIBLE, false)
     }
     const showSetConfirm = () => {
       if (!setConfirmBtn) return
       setConfirmBtn.setProperty(hmUI.prop.TEXT, tr('settingsConfirm') || tr('settings'))
       setConfirmBtn.setProperty(hmUI.prop.VISIBLE, true)
       if (helpBtn) { helpBtn.setProperty(hmUI.prop.TEXT, tr('help')); helpBtn.setProperty(hmUI.prop.VISIBLE, true) }
+      if (menuDim) menuDim.setProperty(hmUI.prop.VISIBLE, true)
+      if (backBtn) { backBtn.setProperty(hmUI.prop.TEXT, tr('back')); backBtn.setProperty(hmUI.prop.VISIBLE, true) }
       if (setConfirmTimer) stopTimer(setConfirmTimer)
-      setConfirmTimer = createTimer(3000, 0, () => { setConfirmTimer = null; hideSetConfirm() })
+      if (MENU_HIDE_MS > 0) setConfirmTimer = createTimer(MENU_HIDE_MS, 0, () => { setConfirmTimer = null; hideSetConfirm() })
     }
 
     ui.tap.addEventListener(hmUI.event.CLICK_DOWN, () => {
@@ -426,6 +432,13 @@ WatchFace({
       rowTap[i] = lay
     }
 
+    // طبقة سوداء شفافة فوق الواجهة وكل طبقات اللمس تظهر مع زرّي الشرح والإعدادات: تُخفت الخلفية وتمتص اللمس
+    // (الودجت بلا مستمع نقر يمرّر اللمس لما تحته، لذلك نسجّل مستمعين فارغين)
+    menuDim = hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 0, y: 0, w: W, h: H, color: 0x000000, alpha: DIM_ALPHA })
+    menuDim.addEventListener(hmUI.event.CLICK_DOWN, () => {})
+    menuDim.addEventListener(hmUI.event.CLICK_UP, () => {})
+    menuDim.setProperty(hmUI.prop.VISIBLE, false)
+
     // زر تأكيد فتح الإعدادات (فوق كل طبقات اللمس)؛ النقر عليه يفتح صفحة الإعدادات
     setConfirmBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
       x: sx(70), y: sy(185), w: sx(250), h: sy(80), radius: sx(40),
@@ -443,6 +456,15 @@ WatchFace({
       click_func: () => { hideSetConfirm(); settingsOpen = true; helpIdx = 0; showPage(4); applyHelp() },
     })
     helpBtn.setProperty(hmUI.prop.VISIBLE, false)
+
+    // زر الرجوع: تحت زر «الإعدادات؟» (آخر القائمة)، يغلق القائمة ويعيد الواجهة كما كانت
+    backBtn = hmUI.createWidget(hmUI.widget.BUTTON, {
+      x: sx(70), y: sy(275), w: sx(250), h: sy(80), radius: sx(40),
+      normal_color: 0x3a3a40, press_color: 0x56565c,
+      text: '', text_size: Math.round((34 * W) / 390), color: 0xffffff,
+      click_func: () => { hideSetConfirm() },
+    })
+    backBtn.setProperty(hmUI.prop.VISIBLE, false)
 
     // ---------- الصفحة 2: الإعدادات ----------
     // 1. زر اللغة
