@@ -69,6 +69,7 @@ const LEFT = hmUI.align.LEFT, RIGHT = hmUI.align.RIGHT
 const DIM_ALPHA = 190      // شفافية الطبقة السوداء فوق الواجهة عند ظهور زرّي الشرح والإعدادات (0 شفاف .. 255 معتم)
 const SUPPORT_URL = 'https://ko-fi.com/vzool'   // رابط دعم المطور (يطابقه رمز QR)
 const ICO_X_RTL = 310, ICO_X_LTR = 46   // موضع أيقونة زر القائمة (وحدات التصميم) في العربية / الإنجليزية
+const NX_BG = 0x2a2208, NX_BG_URGENT = 0x3a1512   // خلفية بطاقة الصلاة القادمة: عادية / آخر 10 دقائق
 const SUPPORT_EMAIL = 'support@virtualzool.com'   // بريد الدعم الفني: الإبلاغ عن مشكلة أو طلب ميزة
 // مصفوفة رمز QR لنفس الرابط أعلاه (25×25، تصحيح أخطاء M): '1' = وحدة سوداء. تُرسم بمستطيلات نقية بدل صورة
 // (الصور تتحول عند البناء إلى ألوان 16 بت فيصير الأبيض رمادياً مخضراً ويضعف المسح). عند تغيير الرابط يلزم توليد مصفوفة جديدة.
@@ -387,7 +388,12 @@ WatchFace({
     ui.t2 = T(1, 0, 8, 390, 70, 64, C.fg, '00:00')
     ui.hij = T(1, 0, 78, 390, 38, 28, C.blue, '')
     ui.greg = T(1, 0, 112, 390, 28, 20, C.dim, '')
-    ui.next = T(1, 0, 146, 390, 42, 26, C.orange, '')
+    // بطاقة الصلاة القادمة: كبسولة داكنة فيها الاسم والعدّ التنازلي، وتحتهما شريط يبيّن ما انقضى بين الصلاة السابقة والقادمة
+    ui.nxBg = R(1, 14, 146, 362, 44, NX_BG, 22)
+    ui.nxTrack = R(1, 36, 183, 318, 4, 0x4a3a14, 2)
+    ui.nxFill = R(1, 36, 183, 318, 4, C.orange, 2)
+    ui.nxName = reg(T(1, 215, 146, 150, 36, 26, C.orange, '', RIGHT), 215, 150, RIGHT, 'mirror')   // نفس توزيع صفوف الصلوات: الاسم في البداية والوقت في النهاية
+    ui.nxLeft = reg(T(1, 30, 146, 170, 36, 30, C.orange, '', LEFT), 30, 170, LEFT, 'mirror')
     for (let i = 0; i < 6; i++) {
       const y = 194 + i * 42
       rowRects.push(R(1, 14, y, 362, 40, 0x1f3d2a, 14))
@@ -775,7 +781,22 @@ WatchFace({
       ui.t2.setProperty(hmUI.prop.TEXT, time)
       ui.hij.setProperty(hmUI.prop.TEXT, pad(hj.day) + ' ' + hmonth + ' ' + hj.year)
       ui.greg.setProperty(hmUI.prop.TEXT, tr('weekdays')[new Date(Y, M - 1, D).getDay()] + '  ·  ' + D + '/' + M + '/' + Y + '  ·  ' + loc.name)
-      ui.next.setProperty(hmUI.prop.TEXT, tr('prayers')[idx] + '   -' + pad(Math.floor(left / 3600)) + ':' + pad(Math.floor((left % 3600) / 60)) + ':' + pad(left % 60))
+      // بطاقة الصلاة القادمة: الاسم + العدّ التنازلي، ولون أحمر في آخر 10 دقائق، وشريط التقدم من الصلاة السابقة إلى القادمة
+      {
+        const prevSec = idx > 0 ? today[idx - 1] * 60 : (target > 86400 ? today[5] * 60 : yesterday[5] * 60 - 86400)
+        const frac = Math.min(1, Math.max(0, (nowSec - prevSec) / (target - prevSec)))
+        const urgent = left <= 600
+        const nxCol = urgent ? IQC.r : C.orange
+        const ld = pad(Math.floor(left / 3600)) + ':' + pad(Math.floor((left % 3600) / 60)) + ':' + pad(left % 60)
+        ui.nxName.setProperty(hmUI.prop.TEXT, tr('prayers')[idx])
+        ui.nxName.setProperty(hmUI.prop.COLOR, nxCol)
+        ui.nxLeft.setProperty(hmUI.prop.TEXT, !st.rev ? ld + '-' : '-' + ld)   // نفس حيلة إشارة «+» في الكبسولات: الإشارة في آخر النص تظهر أمام الأرقام
+        ui.nxLeft.setProperty(hmUI.prop.COLOR, nxCol)
+        ui.nxBg.setProperty(hmUI.prop.COLOR, urgent ? NX_BG_URGENT : NX_BG)
+        ui.nxFill.setProperty(hmUI.prop.COLOR, nxCol)
+        const fw = Math.max(4, Math.round(318 * frac))   // يمتلئ الشريط من جهة البداية (يمين في العربية، يسار في الإنجليزية)
+        ui.nxFill.setProperty(hmUI.prop.MORE, { x: sx(isRTL() ? 36 + 318 - fw : 36), w: sx(fw) })
+      }
       // الصلاة الحالية (بين الأذان وما بعده): آخر صلاة دخل وقتها. الفجر ينتهي بالشروق، والعشاء بعد منتصف الليل تُحسب من أمس.
       let cur = -1, elapsed = 0
       for (const i of [0, 2, 3, 4, 5]) if (today[i] * 60 <= nowSec) cur = i
